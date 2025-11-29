@@ -1,2 +1,8 @@
 python-dotenv~=1.2.1
 SQLAlchemy~=2.0.44
+aiogram~=3.22.0
+alembic==1.17.2
+python-dotenv==1.2.1
+openai==2.8.1
+aiohttp==3.12.15
+psycopg2-binary==2.9.7

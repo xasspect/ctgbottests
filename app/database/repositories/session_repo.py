@@ -1,4 +1,5 @@
 from typing import List, Optional
+import uuid
 from app.database.repositories.base import BaseRepository
 from app.database.models.session import UserSession
 
@@ -13,7 +14,7 @@ class SessionRepository(BaseRepository[UserSession]):
             return (
                 session.query(UserSession)
                 .filter(
-                    UserSession.user_id == user_id,
+                    UserSession.user_id == str(user_id),  # Конвертируем в string
                     UserSession.is_active == True
                 )
                 .first()
@@ -24,7 +25,7 @@ class SessionRepository(BaseRepository[UserSession]):
         with self.get_session() as session:
             return (
                 session.query(UserSession)
-                .filter(UserSession.user_id == user_id)
+                .filter(UserSession.user_id == str(user_id))
                 .order_by(UserSession.created_at.desc())
                 .all()
             )
@@ -33,7 +34,7 @@ class SessionRepository(BaseRepository[UserSession]):
         """Деактивировать все сессии пользователя"""
         with self.get_session() as session:
             sessions = session.query(UserSession).filter(
-                UserSession.user_id == user_id,
+                UserSession.user_id == str(user_id),
                 UserSession.is_active == True
             ).all()
 
@@ -47,5 +48,13 @@ class SessionRepository(BaseRepository[UserSession]):
         # Деактивируем старые сессии
         self.deactivate_all_sessions(user_id)
 
+        # Конвертируем user_id в string для consistency
+        kwargs['user_id'] = str(user_id)
+
         # Создаем новую сессию
-        return self.create(user_id=user_id, **kwargs)
+        return self.create(**kwargs)
+
+    def update_session_step(self, session_id: str, step: str, **kwargs) -> Optional[UserSession]:
+        """Обновить шаг сессии"""
+        updates = {'current_step': step, **kwargs}
+        return self.update(session_id, **updates)

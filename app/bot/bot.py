@@ -1,62 +1,108 @@
 import logging
-from typing import Dict, List, Optional
-# from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+import asyncio
+from aiogram import Bot, Dispatcher
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from app.config.config import config
+from app.bot.handlers.start_handler import StartHandler
+from app.bot.handlers.category_handler import CategoryHandler
+from app.bot.handlers.generation_handler import GenerationHandler
 
-from app.config.config import Config
-# from app.bot.handlers.base_handler import BaseMessageHandler
-# from app.bot.handlers.start_handler import StartHandler
-# from app.bot.handlers.category_handler import CategoryHandler
-# from app.bot.handlers.generation_handler import GenerationHandler
-# from app.bot.handlers.admin_handler import AdminHandler
-
-# from app.services.mpstats_service import MPStatsService
-# from app.services.openai_service import OpenAIService
-# from app.services.content_service import ContentService
-# from app.services.session_service import SessionService
-# from app.services.validation_service import ValidationService
-
-# from app.database.repositories.user_repository import UserRepository
-# from app.database.repositories.category_repository import CategoryRepository
-# from app.database.repositories.session_repository import SessionRepository
-
-# from app.utils.logger import setup_loggingn
 
 class ContentGeneratorBot:
-    def __init__(self, config: Config):
+    """Главный класс Telegram бота на aiogram"""
+
+    def __init__(self, config):
         self.config = config
-        self.database = None
-        # ...
-
-    async def initialize_database(self):
-        """Инициализация базы данных"""
-        from app.database import database
-
-        try:
-            database.connect()
-            database.create_tables()
-            self.database = database
-            self.logger.info("✅ Database initialized successfully")
-        except Exception as e:
-            self.logger.error(f"❌ Database initialization failed: {e}")
-            raise
+        self.bot = None
+        self.dp = None
+        self.handlers = []
+        self.services = {}
+        self.repositories = {}
+        self.logger = logging.getLogger(__name__)
 
     async def initialize(self):
-        """Инициализация всех компонентов бота"""
-        self.logger.info("Initializing Content Generator Bot...")
+        """Инициализация бота"""
+        self.logger.info("🚀 Initializing Telegram Bot (aiogram)...")
 
-        # Инициализация БД первой
-        await self.initialize_database()
+        # Инициализация БД
+        from app.database.database import database
+        database.connect()
+        database.create_tables()
 
-        # Затем остальные компоненты
+        # Инициализация репозиториев
         await self._initialize_repositories()
+
+        # Инициализация сервисов
         await self._initialize_services()
-        await self._initialize_telegram_app()
+
+        # Инициализация aiogram
+        await self._initialize_aiogram()
+
+        # Инициализация обработчиков
         await self._initialize_handlers()
 
-        self.logger.info("Bot initialization completed successfully")
+        self.logger.info("✅ Bot initialization completed")
+
+    async def _initialize_repositories(self):
+        """Инициализация репозиториев"""
+        from app.database.repositories.user_repo import UserRepository
+        from app.database.repositories.category_repo import CategoryRepository
+        from app.database.repositories.session_repo import SessionRepository
+
+        self.repositories = {
+            'user_repo': UserRepository(),
+            'category_repo': CategoryRepository(),
+            'session_repo': SessionRepository(),
+        }
+
+    async def _initialize_services(self):
+        """Инициализация сервисов"""
+        # Пока используем заглушки, но структура для будущих сервисов
+        # from app.services.mpstats_service import MPStatsService
+        # from app.services.openai_service import OpenAIService
+        # from app.services.content_service import ContentService
+        #
+        # self.services = {
+        #     'mpstats': MPStatsService(),
+        #     'openai': OpenAIService(),
+        #     'content': ContentService(
+        #         openai_service=OpenAIService(),
+        #         mpstats_service=MPStatsService()
+        #     )
+        # }
+        # self.logger.info("✅ Services initialized")
+
+    async def _initialize_aiogram(self):
+        """Инициализация aiogram"""
+        self.bot = Bot(
+            token=self.config.telegram.bot_token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+        )
+        self.dp = Dispatcher()
+        self.logger.info("✅ Aiogram initialized")
+
+    async def _initialize_handlers(self):
+        """Инициализация обработчиков"""
+        self.handlers = [
+            StartHandler(self.services, self.repositories),
+            CategoryHandler(self.services, self.repositories),
+            GenerationHandler(self.services, self.repositories),
+        ]
+
+        for handler in self.handlers:
+            await handler.register(self.dp)
+            self.logger.info(f"✅ Registered handler: {handler.__class__.__name__}")
+
+    async def run(self):
+        """Запуск бота"""
+        self.logger.info("🤖 Starting bot polling...")
+        await self.dp.start_polling(self.bot)
 
     async def shutdown(self):
-        """Корректное завершение работы"""
-        if self.database:
-            self.database.close()
-        self.logger.info("✅ Database connection closed")
+        """Завершение работы"""
+        if self.bot:
+            await self.bot.session.close()
+        from app.database.database import database
+        database.close()
+        self.logger.info("👋 Bot shutdown completed")

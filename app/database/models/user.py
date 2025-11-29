@@ -1,11 +1,12 @@
-from sqlalchemy import Column, BigInteger, String, Integer
+from sqlalchemy import Column, String, Integer
 from app.database.models.base import Base, BaseModel
 
 
 class User(Base, BaseModel):
     __tablename__ = "users"
 
-    id = Column(BigInteger, primary_key=True)  # Telegram user ID
+    # Используем String для Telegram ID (он может быть большим)
+    id = Column(String, primary_key=True)  # Telegram user ID
     username = Column(String(255), nullable=True)
     first_name = Column(String(255), nullable=True)
     last_name = Column(String(255), nullable=True)
