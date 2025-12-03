@@ -1,3 +1,4 @@
+# app/database/repositories/content_repo.py
 from typing import List, Optional
 from app.database.repositories.base import BaseRepository
 from app.database.models.content import GeneratedContent
@@ -25,3 +26,7 @@ class ContentRepository(BaseRepository[GeneratedContent]):
                 .filter(GeneratedContent.session_id == session_id)
                 .first()
             )
+
+    def create_content(self, **kwargs) -> GeneratedContent:
+        """Создать запись сгенерированного контента"""
+        return self.create(**kwargs)

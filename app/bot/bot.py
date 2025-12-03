@@ -49,29 +49,30 @@ class ContentGeneratorBot:
         from app.database.repositories.user_repo import UserRepository
         from app.database.repositories.category_repo import CategoryRepository
         from app.database.repositories.session_repo import SessionRepository
+        from app.database.repositories.content_repo import ContentRepository
 
         self.repositories = {
             'user_repo': UserRepository(),
             'category_repo': CategoryRepository(),
             'session_repo': SessionRepository(),
+            'content_repo': ContentRepository(),
         }
 
     async def _initialize_services(self):
         """Инициализация сервисов"""
-        # Пока используем заглушки, но структура для будущих сервисов
-        # from app.services.mpstats_service import MPStatsService
-        # from app.services.openai_service import OpenAIService
-        # from app.services.content_service import ContentService
-        #
-        # self.services = {
-        #     'mpstats': MPStatsService(),
-        #     'openai': OpenAIService(),
-        #     'content': ContentService(
-        #         openai_service=OpenAIService(),
-        #         mpstats_service=MPStatsService()
-        #     )
-        # }
-        # self.logger.info("✅ Services initialized")
+        from app.services.mpstats_service import MPStatsService
+        from app.services.openai_service import OpenAIService
+        from app.services.content_service import ContentService
+
+        mpstats_service = MPStatsService()
+        openai_service = OpenAIService()
+
+        self.services = {
+            'mpstats': mpstats_service,
+            'openai': openai_service,
+            'content': ContentService(mpstats_service, openai_service)
+        }
+        self.logger.info("✅ Services initialized")
 
     async def _initialize_aiogram(self):
         """Инициализация aiogram"""

@@ -33,6 +33,8 @@ class APIConfig:
     # Обязательные поля без значений по умолчанию идут ПЕРВЫМИ
     mpstats_key: str
     openai_key: str
+    mpstats_email: str
+    mpstats_pswd: str
 
     # Поля со значениями по умолчанию идут ПОСЛЕ
     mpstats_base_url: str = "https://mpstats.io/api"
@@ -41,6 +43,7 @@ class APIConfig:
     # openai_model: str = "gpt-4"
     openai_max_tokens: int = 2000
     openai_temperature: float = 0.7
+
 
 
 @dataclass
@@ -114,6 +117,8 @@ class Config:
         self.api = APIConfig(
             mpstats_key=self._get_required('MPSTATS_API_KEY'),
             openai_key=self._get_required('OPENAI_API_KEY'),
+            mpstats_email=self._get_required('MPSTATS_EMAIL'),
+            mpstats_pswd=self._get_required('MPSTATS_PSWD'),
             mpstats_base_url=os.getenv('MPSTATS_BASE_URL', 'https://mpstats.io/api'),
             mpstats_delay=float(os.getenv('MPSTATS_REQUEST_DELAY', '1.0')),
             mpstats_timeout=int(os.getenv('MPSTATS_TIMEOUT', '30')),

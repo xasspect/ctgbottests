@@ -7,6 +7,7 @@ class GeneratedContent(Base, BaseModel):
 
     id = Column(String, primary_key=True)
     session_id = Column(String, ForeignKey('user_sessions.id'), nullable=False)
+    # Меняем на BigInteger для consistency
     user_id = Column(BigInteger, ForeignKey('users.id'), nullable=False)
 
     # Сгенерированный контент

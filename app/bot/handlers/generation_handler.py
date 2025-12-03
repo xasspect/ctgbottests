@@ -1,5 +1,6 @@
 import asyncio
-
+import logging
+from aiogram.filters import Command
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -12,6 +13,7 @@ class GenerationHandler(BaseMessageHandler):
     def __init__(self, services: dict, repositories: dict):
         super().__init__(services, repositories)
         self.router = Router()
+        self.logger = logging.getLogger(__name__)
 
     async def register(self, dp):
         dp.include_router(self.router)
@@ -19,6 +21,53 @@ class GenerationHandler(BaseMessageHandler):
         self.router.callback_query.register(self.handle_generate_title, F.data == "generate_title")
         self.router.callback_query.register(self.handle_regenerate_title, F.data == "regenerate_title")
         self.router.callback_query.register(self.handle_approve_title, F.data.startswith("approve_title_"))
+        # Добавляем обработчики для генерации описаний
+        self.router.callback_query.register(self.handle_generate_short_desc, F.data.startswith("generate_short_"))
+        self.router.callback_query.register(self.handle_generate_long_desc, F.data.startswith("generate_long_"))
+        self.router.callback_query.register(self.handle_generate_both_desc, F.data.startswith("generate_both_"))
+        self.router.message.register(self.show_generate_options, Command(commands=["generate"]))
+
+    async def show_generate_options(self, message: Message):
+        """Показать опции генерации"""
+        user_id = message.from_user.id
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_active_session(user_id)
+
+        if not session or session.current_step != "params_added":
+            await message.answer(
+                "⚠️ Сначала завершите настройку товара:\n"
+                "1. <code>/categories</code> - выбрать категорию и назначение\n"
+                "2. Укажите дополнительные параметры (опционально)\n"
+                "3. Затем используйте <code>/generate</code>"
+            )
+            return
+
+        # Получаем название категории из наших данных
+        category_name = self._get_category_display_name(session.category_id)
+
+        # Показываем кнопку для начала генерации
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🎯 Сгенерировать контент", callback_data="generate_title")
+
+        await message.answer(
+            "📊 <b>Параметры генерации:</b>\n\n"
+            f"• <b>Категория:</b> {category_name}\n"
+            f"• <b>Назначение:</b> {session.purpose}\n"
+            f"• <b>Доп. параметры:</b> {', '.join(session.additional_params) if session.additional_params else 'нет'}\n\n"
+            "Нажмите кнопку ниже чтобы начать генерацию:",
+            reply_markup=builder.as_markup()
+        )
+
+    def _get_category_display_name(self, category_id: str) -> str:
+        """Получить отображаемое название категории"""
+        categories_data = {
+            "electronics": "📱 Электроника",
+            "clothing": "👕 Одежда и обувь",
+            "home": "🏠 Дом и сад",
+            "beauty": "💄 Красота и здоровье"
+        }
+        return categories_data.get(category_id, "Неизвестная категория")
 
     async def handle_additional_params(self, message: Message):
         """Обработка дополнительных параметров"""
@@ -64,8 +113,9 @@ class GenerationHandler(BaseMessageHandler):
             reply_markup=builder.as_markup()
         )
 
+    # app/bot/handlers/generation_handler.py (обновляем методы)
     async def handle_generate_title(self, callback: CallbackQuery):
-        """Генерация заголовка"""
+        """Генерация заголовка с реальными сервисами"""
         user_id = callback.from_user.id
 
         session_repo = self.repositories['session_repo']
@@ -78,37 +128,37 @@ class GenerationHandler(BaseMessageHandler):
         await callback.message.edit_text("🔍 <b>Получаю ключевые слова из MPStats...</b>")
 
         try:
-            # Имитация работы с MPStats
+            # Получаем данные категории
             category_repo = self.repositories['category_repo']
             category = category_repo.get_by_id(session.category_id)
 
-            # Получаем ключевые слова (пока заглушка)
-            keywords = await self._get_mock_keywords(category.name, session.purpose)
+            if not category:
+                await callback.message.edit_text("❌ Категория не найдена")
+                return
 
-            await callback.message.edit_text(
-                f"✅ <b>Получено {len(keywords)} ключевых слов</b>\n"
-                f"🤖 <b>Фильтрую через AI...</b>"
+            # Используем сервис для генерации контента
+            content_service = self.services['content']
+
+            category_data = {
+                'system_prompt_filter': category.system_prompt_filter,
+                'system_prompt_title': category.system_prompt_title
+            }
+
+            result = await content_service.generate_content_workflow(
+                category_name=category.name,
+                purpose=session.purpose,
+                additional_params=session.additional_params,
+                category_data=category_data
             )
 
-            # Фильтрация ключевых слов (заглушка)
-            filtered_keywords = await self._filter_keywords(keywords, session.additional_params)
-
-            await callback.message.edit_text(
-                f"✅ <b>Отфильтровано до {len(filtered_keywords)} релевантных слов</b>\n"
-                f"🎯 <b>Генерирую заголовок...</b>"
-            )
-
-            # Генерация заголовка (заглушка)
-            title = await self._generate_mock_title(category.name, session.purpose, filtered_keywords)
-
-            # Сохраняем заголовок в сессии
-            session.generated_title = title
-            session.keywords = filtered_keywords
+            # Сохраняем результаты в сессии
+            session.generated_title = result['title']
+            session.keywords = result['keywords']
             session.current_step = "title_generated"
             session_repo.update(
                 session.id,
-                generated_title=title,
-                keywords=filtered_keywords,
+                generated_title=result['title'],
+                keywords=result['keywords'],
                 current_step="title_generated"
             )
 
@@ -120,8 +170,147 @@ class GenerationHandler(BaseMessageHandler):
 
             await callback.message.edit_text(
                 f"📝 <b>Предлагаю заголовок:</b>\n\n"
-                f"<code>{title}</code>\n\n"
-                f"🔑 <b>Ключевые слова:</b> {', '.join(filtered_keywords[:8])}...",
+                f"<code>{result['title']}</code>\n\n"
+                f"🔑 <b>Ключевые слова:</b> {', '.join(result['keywords'][:8])}...",
+                reply_markup=builder.as_markup()
+            )
+
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка генерации: {e}")
+            await callback.message.edit_text(
+                f"❌ <b>Ошибка генерации:</b> {str(e)}\n\n"
+                "Попробуйте изменить параметры или начать заново с /reset"
+            )
+
+        await callback.answer()
+
+
+
+    async def handle_generate_short_desc(self, callback: CallbackQuery):
+        """Генерация краткого описания"""
+        await self._generate_description(callback, "short")
+
+    async def handle_generate_long_desc(self, callback: CallbackQuery):
+        """Генерация подробного описания"""
+        await self._generate_description(callback, "long")
+
+    async def handle_generate_both_desc(self, callback: CallbackQuery):
+        """Генерация обоих описаний"""
+        session_id = callback.data.replace("generate_both_", "")
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_by_id(session_id)
+
+        if not session:
+            await callback.answer("❌ Сессия не найдена")
+            return
+
+        await callback.message.edit_text("📄 <b>Генерирую оба описания...</b>")
+
+        try:
+            category_repo = self.repositories['category_repo']
+            category = category_repo.get_by_id(session.category_id)
+            content_service = self.services['content']
+
+            category_data = {
+                'system_prompt_description': category.system_prompt_description
+            }
+
+            # Генерируем оба описания
+            short_desc = await content_service.generate_description_workflow(
+                session.generated_title, session.keywords, "short", category.name, category_data
+            )
+
+            long_desc = await content_service.generate_description_workflow(
+                session.generated_title, session.keywords, "long", category.name, category_data
+            )
+
+            # Сохраняем в сессии
+            session.short_description = short_desc
+            session.long_description = long_desc
+            session_repo.update(
+                session.id,
+                short_description=short_desc,
+                long_description=long_desc
+            )
+
+            # Сохраняем в таблице generated_content
+            content_repo = self.repositories['content_repo']
+            content_repo.create(
+                session_id=session.id,
+                user_id=session.user_id,
+                title=session.generated_title,
+                short_description=short_desc,
+                long_description=long_desc,
+                keywords=session.keywords,
+                category_id=session.category_id,
+                purpose=session.purpose
+            )
+
+            await callback.message.edit_text(
+                f"✅ <b>Оба описания сгенерированы!</b>\n\n"
+                f"📝 <b>Заголовок:</b>\n<code>{session.generated_title}</code>\n\n"
+                f"📋 <b>Краткое описание:</b>\n{short_desc}\n\n"
+                f"📖 <b>Подробное описание:</b>\n{long_desc}\n\n"
+                f"💾 <b>Контент сохранен в истории</b>"
+            )
+
+        except Exception as e:
+            await callback.message.edit_text(f"❌ <b>Ошибка генерации:</b> {str(e)}")
+
+        await callback.answer()
+
+    async def _generate_description(self, callback: CallbackQuery, desc_type: str):
+        """Общий метод генерации описания"""
+        session_id = callback.data.replace(f"generate_{desc_type}_", "")
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_by_id(session_id)
+
+        if not session:
+            await callback.answer("❌ Сессия не найдена")
+            return
+
+        type_name = "краткое" if desc_type == "short" else "подробное"
+        await callback.message.edit_text(f"📄 <b>Генерирую {type_name} описание...</b>")
+
+        try:
+            category_repo = self.repositories['category_repo']
+            category = category_repo.get_by_id(session.category_id)
+            content_service = self.services['content']
+
+            category_data = {
+                'system_prompt_description': category.system_prompt_description
+            }
+
+            description = await content_service.generate_description_workflow(
+                session.generated_title, session.keywords, desc_type, category.name, category_data
+            )
+
+            # Сохраняем в сессии
+            if desc_type == "short":
+                session.short_description = description
+            else:
+                session.long_description = description
+
+            session_repo.update(
+                session.id,
+                **{f"{desc_type}_description": description}
+            )
+
+            # Показываем кнопки для дальнейших действий
+            builder = InlineKeyboardBuilder()
+            if desc_type == "short":
+                builder.button(text="📖 Сгенерировать подробное", callback_data=f"generate_long_{session.id}")
+            else:
+                builder.button(text="📋 Сгенерировать краткое", callback_data=f"generate_short_{session.id}")
+
+            builder.button(text="⚡ Оба описания", callback_data=f"generate_both_{session.id}")
+            builder.button(text="🔄 Перегенерировать", callback_data=f"regenerate_{desc_type}_{session.id}")
+            builder.adjust(1)
+
+            await callback.message.edit_text(
+                f"✅ <b>{type_name.title()} описание:</b>\n\n{description}",
                 reply_markup=builder.as_markup()
             )
 

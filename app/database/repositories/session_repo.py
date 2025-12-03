@@ -14,7 +14,7 @@ class SessionRepository(BaseRepository[UserSession]):
             return (
                 session.query(UserSession)
                 .filter(
-                    UserSession.user_id == str(user_id),  # Конвертируем в string
+                    UserSession.user_id == user_id,  # Теперь integer
                     UserSession.is_active == True
                 )
                 .first()
@@ -25,7 +25,7 @@ class SessionRepository(BaseRepository[UserSession]):
         with self.get_session() as session:
             return (
                 session.query(UserSession)
-                .filter(UserSession.user_id == str(user_id))
+                .filter(UserSession.user_id == user_id)  # Теперь integer
                 .order_by(UserSession.created_at.desc())
                 .all()
             )
@@ -34,7 +34,7 @@ class SessionRepository(BaseRepository[UserSession]):
         """Деактивировать все сессии пользователя"""
         with self.get_session() as session:
             sessions = session.query(UserSession).filter(
-                UserSession.user_id == str(user_id),
+                UserSession.user_id == user_id,  # Теперь integer
                 UserSession.is_active == True
             ).all()
 
@@ -48,8 +48,8 @@ class SessionRepository(BaseRepository[UserSession]):
         # Деактивируем старые сессии
         self.deactivate_all_sessions(user_id)
 
-        # Конвертируем user_id в string для consistency
-        kwargs['user_id'] = str(user_id)
+        # Теперь user_id уже integer
+        kwargs['user_id'] = user_id
 
         # Создаем новую сессию
         return self.create(**kwargs)
