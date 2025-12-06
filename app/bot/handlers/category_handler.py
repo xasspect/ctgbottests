@@ -1,4 +1,5 @@
 # app/bot/handlers/category_handler.py
+import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
@@ -9,9 +10,10 @@ from app.bot.handlers.base_handler import BaseMessageHandler
 class CategoryHandler(BaseMessageHandler):
     """Обработчик выбора категории и назначения"""
 
-    def __init__(self, services: dict, repositories: dict):
-        super().__init__(services, repositories)
+    def __init__(self, config, services, repositories):
+        super().__init__(config, services, repositories)
         self.router = Router()
+        self.scraper_service = services.get('scraper')
 
         # Пример категорий и назначений
         self.categories = {
@@ -58,12 +60,23 @@ class CategoryHandler(BaseMessageHandler):
         }
 
     async def register(self, dp):
+        """Регистрация обработчиков"""
+        if not self.scraper_service:
+            self.logger.error("Scraper service not found!")
+            # Можно создать его здесь, если нужно
+            from app.services.mpstats_scraper_service import MPStatsScraperService
+            self.scraper_service = MPStatsScraperService(self.config)
+            await self.scraper_service.initialize_scraper()
+
         dp.include_router(self.router)
         self.router.message.register(self.show_categories, Command(commands=["categories"]))
         self.router.message.register(self.reset_session, Command(commands=["reset"]))
         self.router.message.register(self.handle_additional_params, F.text & ~F.command)
         self.router.callback_query.register(self.handle_category_select, F.data.startswith("category_"))
         self.router.callback_query.register(self.handle_purpose_select, F.data.startswith("purpose_"))
+
+        # Новая команда для запуска скрапера
+        self.router.message.register(self.start_scraping, Command(commands=["scrape"]))
 
     async def show_categories(self, message: Message):
         """Показать список категорий"""
@@ -204,18 +217,26 @@ class CategoryHandler(BaseMessageHandler):
     async def handle_additional_params(self, message: Message):
         """Обработка ввода дополнительных параметров"""
         user_id = message.from_user.id
-        params_text = message.text.strip().lower()
+
+        # ИГНОРИРУЕМ КОМАНДЫ
+        if message.text and message.text.startswith('/'):
+            self.logger.info(f"Игнорируем команду: {message.text}")
+            return
 
         # Проверяем активную сессию
         session_repo = self.repositories['session_repo']
         session = session_repo.get_active_session(user_id)
 
+        self.logger.info(f"=== handle_additional_params: user_id={user_id}, session={session is not None}")
+        if session:
+            self.logger.info(f"Текущий шаг сессии: {getattr(session, 'current_step', 'N/A')}")
+
         if not session or session.current_step != "purpose_selected":
-            await message.answer(
-                "⚠️ Сначала выберите категорию и назначение с помощью <code>/categories</code>"
-            )
+            # Не выводим сообщение, если это не наш шаг
             return
 
+        # Остальной код без изменений...
+        params_text = message.text.strip().lower()
         additional_params = []
 
         if params_text != "нет":
@@ -225,22 +246,55 @@ class CategoryHandler(BaseMessageHandler):
             await message.answer(
                 f"✅ <b>Дополнительные параметры сохранены:</b>\n"
                 f"{', '.join(additional_params)}\n\n"
-                "🔄 <b>Готов к генерации контента!</b>\n\n"
-                "Используйте <code>/generate</code> чтобы начать генерацию"
+                "🔄 <b>Готов к сбору данных!</b>\n\n"
+                "Используйте <code>/generate</code> чтобы начать сбор данных с MPStats"
             )
         else:
             await message.answer(
-                "🔄 <b>Готов к генерации контента без дополнительных параметров!</b>\n\n"
-                "Используйте <code>/generate</code> чтобы начать генерацию"
+                "🔄 <b>Готов к сбору данных без дополнительных параметров!</b>\n\n"
+                "Используйте <code>/generate</code> чтобы начать сбор данных с MPStats"
             )
 
         # Сохраняем параметры
         session.additional_params = additional_params
         session.current_step = "params_added"
-        session_repo.update(
+
+        self.logger.info(
+            f"🔄 Обновляем сессию {session.id}: additional_params={additional_params}, current_step=params_added")
+
+        updated_session = session_repo.update(
             session.id,
             additional_params=additional_params,
             current_step="params_added"
+        )
+
+        if updated_session:
+            self.logger.info(f"✅ Сессия обновлена: ID={updated_session.id}, Шаг={updated_session.current_step}")
+        else:
+            self.logger.error("❌ Сессия не обновлена!")
+
+    async def start_scraping(self, message: Message):
+        """Запуск скрапинга"""
+        user_id = message.from_user.id
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_active_session(user_id)
+
+        if not session or session.current_step != "params_added":
+            await message.answer(
+                "⚠️ <b>Сначала настройте параметры</b>\n\n"
+                "Используйте <code>/categories</code> чтобы выбрать категорию, назначение и параметры."
+            )
+            return
+
+        # Запускаем скрапинг
+        await message.answer("⏳ <b>Начинаю сбор данных с MPStats...</b>")
+
+        # Здесь будет логика запуска скрапера
+        # Пока просто заглушка
+        await message.answer(
+            "✅ <b>Скрапер запущен!</b>\n"
+            "Это тестовое сообщение. Реальная логика скрапера будет добавлена позже."
         )
 
     async def reset_session(self, message: Message):

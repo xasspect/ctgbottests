@@ -1,4 +1,4 @@
-# app/bot/handlers/start_handler.py
+import logging
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.filters import Command
@@ -6,70 +6,94 @@ from app.bot.handlers.base_handler import BaseMessageHandler
 
 
 class StartHandler(BaseMessageHandler):
-    """Обработчик команды /start и /help"""
+    """Обработчик команды /start"""
 
-    def __init__(self, services: dict, repositories: dict):
-        super().__init__(services, repositories)
+    def __init__(self, config, services, repositories):
+        super().__init__(config, services, repositories)
         self.router = Router()
 
     async def register(self, dp):
+        """Регистрация обработчиков"""
         dp.include_router(self.router)
-        self.router.message.register(self.start_command, Command(commands=["start"]))
-        self.router.message.register(self.help_command, Command(commands=["help"]))
+        self.router.message.register(self.start_command, Command(commands=["start", "help"]))
+        self.router.message.register(self.about_command, Command(commands=["about"]))
 
     async def start_command(self, message: Message):
-        """Обработчик /start"""
-        user = message.from_user
-        user_id = user.id
+        """Обработчик команды /start"""
+        try:
+            # Проверяем наличие репозиториев
+            if not self.repositories:
+                self.logger.error("❌ Repositories not initialized!")
+                await message.answer(
+                    "👋 <b>Добро пожаловать в MPStats Content Generator Bot!</b>\n\n"
+                    "📊 Я помогу вам генерировать контент для ваших товаров.\n\n"
+                    "Доступные команды:\n"
+                    "/categories - Выбрать категорию и назначение\n"
+                    "/generate - Сгенерировать контент\n"
+                    "/reset - Сбросить текущую сессию\n"
+                    "/about - О боте\n"
+                    "/help - Помощь"
+                )
+                return
 
-        # Сохраняем/получаем пользователя в БД
-        user_repo = self.repositories['user_repo']
-        db_user = user_repo.get_or_create(
-            telegram_id=user_id,
-            username=user.username,
-            first_name=user.first_name,
-            last_name=user.last_name
+            # Получаем репозитории
+            user_repo = self.repositories.get('user_repo')
+            if not user_repo:
+                self.logger.error("❌ user_repo not found in repositories!")
+                await message.answer(
+                    "👋 <b>Добро пожаловать в MPStats Content Generator Bot!</b>\n\n"
+                    "📊 Я помогу вам генерировать контент для ваших товаров.\n\n"
+                    "Доступные команды:\n"
+                    "/categories - Выбрать категорию и назначение\n"
+                    "/generate - Сгенерировать контент\n"
+                    "/reset - Сбросить текущую сессию\n"
+                    "/about - О боте\n"
+                    "/help - Помощь"
+                )
+                return
+
+            # Создаем/получаем пользователя
+            user = user_repo.get_or_create(
+                telegram_id=message.from_user.id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                last_name=message.from_user.last_name
+            )
+
+            await message.answer(
+                f"👋 <b>Добро пожаловать, {message.from_user.first_name}!</b>\n\n"
+                f"📊 <b>MPStats Content Generator Bot</b>\n\n"
+                "Я помогу вам:\n"
+                "✅ Собирать данные о категориях с MPStats\n"
+                "✅ Генерировать SEO-оптимизированные заголовки и описания\n"
+                "✅ Скачивать Excel файлы с аналитикой\n\n"
+                "🛠 <b>Доступные команды:</b>\n"
+                "/categories - Выбрать категорию и назначение\n"
+                "/generate - Сгенерировать контент\n"
+                "/reset - Сбросить текущую сессию\n"
+                "/about - О боте\n"
+                "/help - Помощь\n\n"
+                "🚀 <b>Начните с команды /categories</b>"
+            )
+
+        except Exception as e:
+            self.logger.error(f"❌ Error in start_command: {e}", exc_info=True)
+            await message.answer(
+                "👋 <b>Добро пожаловать!</b>\n\n"
+                "Произошла ошибка при инициализации. Попробуйте команду /categories"
+            )
+
+    async def about_command(self, message: Message):
+        """Обработчик команды /about"""
+        await message.answer(
+            "🤖 <b>MPStats Content Generator Bot</b>\n\n"
+            "📊 <b>Версия:</b> 1.0.0\n"
+            "👨‍💻 <b>Разработчик:</b> AI Assistant\n"
+            "🔗 <b>Источник:</b> MPStats API + OpenAI\n\n"
+            "💡 <b>Возможности:</b>\n"
+            "• Сбор данных с MPStats\n"
+            "• Генерация SEO-контента\n"
+            "• Скачивание Excel отчетов\n"
+            "• Автоматическая категоризация\n\n"
+            "🚀 <b>Начните с команды /categories</b>"
         )
-
-        welcome_text = (
-            "🤖 <b>Добро пожаловать в MPStats Content Generator!</b>\n\n"
-            "Я помогу вам создать <b>продающие заголовки и описания</b> "
-            "для товаров на маркетплейсах.\n\n"
-            "📝 <b>Процесс работы:</b>\n"
-            "1. <code>/categories</code> - выбрать категорию и назначение товара\n"
-            "2. Укажите дополнительные параметры (опционально)\n"
-            "3. <code>/generate</code> - начать генерацию контента\n"
-            "4. Получите готовый контент!\n\n"
-            "⚡ <b>Основные команды:</b>\n"
-            "/categories - выбрать категорию\n"
-            "/generate - начать генерацию\n"
-            "/reset - начать заново\n"
-            "/help - помощь"
-        )
-
-        await message.answer(welcome_text)
-
-    async def help_command(self, message: Message):
-        """Обработчик /help"""
-        help_text = (
-            "📖 <b>Помощь по боту</b>\n\n"
-            "🎯 <b>Как работает бот:</b>\n"
-            "1. Выбираете категорию товара\n"
-            "2. Указываете назначение (например: 'для игр', 'повседневная')\n"
-            "3. Добавляете параметры через запятую (опционально)\n"
-            "4. Получаете ключевые слова из MPStats\n"
-            "5. Генерируете заголовок и описания\n\n"
-            "🔄 <b>Процесс генерации:</b>\n"
-            "• AI анализирует ключевые слова\n"
-            "• Фильтрует нерелевантные слова\n"
-            "• Создает продающий заголовок\n"
-            "• Генерирует описания разного формата\n\n"
-            "⚡ <b>Команды:</b>\n"
-            "/start - начать работу\n"
-            "/categories - выбрать категорию\n"
-            "/generate - начать генерацию\n"
-            "/reset - сбросить сессию\n"
-            "/help - эта справка"
-        )
-
-        await message.answer(help_text)

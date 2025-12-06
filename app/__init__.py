@@ -7,5 +7,6 @@ __version__ = "1.0.0"
 
 from app.bot.bot import ContentGeneratorBot
 from app.config.config import Config
+from app.utils.keywords_processor import ExcelToJsonConverter
 
-__all__ = ['ContentGeneratorBot', 'Config']
+__all__ = ['ContentGeneratorBot', 'Config', 'ExcelToJsonConverter']

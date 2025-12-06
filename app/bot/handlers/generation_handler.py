@@ -5,19 +5,20 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.bot.handlers.base_handler import BaseMessageHandler
+from app.config.config import config
 
 
 class GenerationHandler(BaseMessageHandler):
     """Обработчик генерации контента"""
 
-    def __init__(self, services: dict, repositories: dict):
-        super().__init__(services, repositories)
+    def __init__(self, config, services: dict, repositories: dict):
+        super().__init__(config, services, repositories)
         self.router = Router()
         self.logger = logging.getLogger(__name__)
 
     async def register(self, dp):
         dp.include_router(self.router)
-        self.router.message.register(self.handle_additional_params, F.text & ~F.command)
+        # Убрана регистрация handle_additional_params - это в CategoryHandler
         self.router.callback_query.register(self.handle_generate_title, F.data == "generate_title")
         self.router.callback_query.register(self.handle_regenerate_title, F.data == "regenerate_title")
         self.router.callback_query.register(self.handle_approve_title, F.data.startswith("approve_title_"))
@@ -28,13 +29,46 @@ class GenerationHandler(BaseMessageHandler):
         self.router.message.register(self.show_generate_options, Command(commands=["generate"]))
 
     async def show_generate_options(self, message: Message):
-        """Показать опции генерации"""
+        """Показать опции генерации и запустить скрапер"""
         user_id = message.from_user.id
+        self.logger.info(f"=== ВЫЗВАН /generate для пользователя {user_id} ===")
+        self.logger.info(f"Текст сообщения: '{message.text}'")
+
+        self.logger.info(f"Репозитории доступны: {list(self.repositories.keys())}")
+        self.logger.info(f"Сервисы доступны: {list(self.services.keys())}")
+
+        # Проверяем наличие репозитория
+        if 'session_repo' not in self.repositories:
+            self.logger.error("❌ session_repo не найден в repositories!")
+            await message.answer("❌ Ошибка: репозиторий сессий не инициализирован")
+            return
 
         session_repo = self.repositories['session_repo']
-        session = session_repo.get_active_session(user_id)
+        self.logger.info(f"session_repo тип: {type(session_repo)}")
 
-        if not session or session.current_step != "params_added":
+        try:
+            # Получаем сессию с отладочной информацией
+            self.logger.info(f"Запрашиваем активную сессию для user_id={user_id}")
+            session = session_repo.get_active_session(user_id)
+
+            # Логируем полученную сессию
+            if session:
+                self.logger.info(f"✅ Сессия получена: ID={session.id}")
+                self.logger.info(f"  Категория: {getattr(session, 'category_id', 'N/A')}")
+                self.logger.info(f"  Назначение: {getattr(session, 'purpose', 'N/A')}")
+                self.logger.info(f"  Текущий шаг: {getattr(session, 'current_step', 'N/A')}")
+                self.logger.info(f"  Доп. параметры: {getattr(session, 'additional_params', 'N/A')}")
+                self.logger.info(f"  Активна: {getattr(session, 'is_active', 'N/A')}")
+            else:
+                self.logger.warning("❌ Сессия не найдена или не активна")
+        except Exception as e:
+            print(e)
+
+            # [Остальной код остается без изменений...]
+
+        # Проверяем, есть ли сессия
+        # Проверяем, есть ли сессия
+        if not session:
             await message.answer(
                 "⚠️ Сначала завершите настройку товара:\n"
                 "1. <code>/categories</code> - выбрать категорию и назначение\n"
@@ -43,21 +77,92 @@ class GenerationHandler(BaseMessageHandler):
             )
             return
 
+        # ВРЕМЕННО: пропускаем проверку current_step для тестирования
+        # if session.current_step != "params_added":
+        #     await message.answer(
+        #         f"⚠️ Текущий шаг: {session.current_step}. Сначала завершите настройку:\n"
+        #         "1. <code>/categories</code> - выбрать категорию и назначение\n"
+        #         "2. Укажите дополнительные параметры (опционально)\n"
+        #         "3. Затем используйте <code>/generate</code>"
+        #     )
+        #     return
+
+        # Вместо этого просто логируем шаг
+        self.logger.info(f"Шаг сессии: {session.current_step}, продолжаем...")
+
         # Получаем название категории из наших данных
         category_name = self._get_category_display_name(session.category_id)
 
-        # Показываем кнопку для начала генерации
-        builder = InlineKeyboardBuilder()
-        builder.button(text="🎯 Сгенерировать контент", callback_data="generate_title")
+        # Проверяем наличие скрапера
+        if 'scraper' not in self.services:
+            self.logger.error("❌ Скрапер сервис не найден в services!")
+            await message.answer("❌ Ошибка: скрапер сервис не инициализирован")
+            return
 
-        await message.answer(
-            "📊 <b>Параметры генерации:</b>\n\n"
-            f"• <b>Категория:</b> {category_name}\n"
-            f"• <b>Назначение:</b> {session.purpose}\n"
-            f"• <b>Доп. параметры:</b> {', '.join(session.additional_params) if session.additional_params else 'нет'}\n\n"
-            "Нажмите кнопку ниже чтобы начать генерацию:",
-            reply_markup=builder.as_markup()
-        )
+        scraper_service = self.services['scraper']
+
+        # Запускаем скрапер для сбора данных
+        await message.answer(f"🔍 <b>Начинаю сбор данных с MPStats для категории:</b> {category_name}")
+
+        try:
+            # Подготавливаем параметры для скрапера
+            scraper_params = {
+                'category': session.category_id,
+                'purpose': session.purpose,
+                'additional_params': session.additional_params if hasattr(session, 'additional_params') else [],
+                'user_id': user_id,
+                'session_id': session.id
+            }
+
+            self.logger.info(f"Запускаем скрапер с параметрами: {scraper_params}")
+
+            # Запускаем скрапер
+            downloaded_file = await scraper_service.scrape_categories(scraper_params)
+
+            if downloaded_file:
+                # Сохраняем путь к файлу в сессии
+                session.scraped_file = downloaded_file
+                session.current_step = "data_scraped"
+                session_repo.update(
+                    session.id,
+                    scraped_file=downloaded_file,
+                    current_step="data_scraped"
+                )
+
+                await message.answer(
+                    f"✅ <b>Данные успешно собраны!</b>\n\n"
+                    f"📁 Файл сохранен: <code>{downloaded_file}</code>\n\n"
+                    "Теперь можно сгенерировать контент на основе собранных данных."
+                )
+
+                # Показываем кнопку для генерации контента
+                builder = InlineKeyboardBuilder()
+                builder.button(text="🎯 Сгенерировать заголовок", callback_data="generate_title")
+
+                await message.answer(
+                    "📊 <b>Параметры генерации:</b>\n\n"
+                    f"• <b>Категория:</b> {category_name}\n"
+                    f"• <b>Назначение:</b> {session.purpose}\n"
+                    f"• <b>Доп. параметры:</b> {', '.join(session.additional_params) if hasattr(session, 'additional_params') and session.additional_params else 'нет'}\n"
+                    f"• <b>Собранные данные:</b> ✅\n\n"
+                    "Нажмите кнопку ниже чтобы начать генерацию контента:",
+                    reply_markup=builder.as_markup()
+                )
+            else:
+                await message.answer(
+                    "❌ <b>Не удалось собрать данные с MPStats</b>\n\n"
+                    "Попробуйте:\n"
+                    "1. Проверить логин/пароль MPStats в настройках\n"
+                    "2. Подождать и попробовать снова\n"
+                    "3. Использовать заглушечные данные для тестирования"
+                )
+
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка при сборе данных: {e}", exc_info=True)
+            await message.answer(
+                f"❌ <b>Ошибка при сборе данных:</b>\n{str(e)[:200]}\n\n"
+                "Попробуйте еще раз или обратитесь к администратору."
+            )
 
     def _get_category_display_name(self, category_id: str) -> str:
         """Получить отображаемое название категории"""
@@ -69,54 +174,15 @@ class GenerationHandler(BaseMessageHandler):
         }
         return categories_data.get(category_id, "Неизвестная категория")
 
-    async def handle_additional_params(self, message: Message):
-        """Обработка дополнительных параметров"""
-        user_id = message.from_user.id
-        params_text = message.text.strip().lower()
-
-        # Проверяем активную сессию
-        session_repo = self.repositories['session_repo']
-        session = session_repo.get_active_session(user_id)
-
-        if not session or session.current_step != "purpose_added":
-            return
-
-        additional_params = []
-
-        if params_text != "нет":
-            # Разбиваем параметры по запятой
-            additional_params = [param.strip() for param in params_text.split(',') if param.strip()]
-
-            await message.answer(
-                f"✅ <b>Дополнительные параметры сохранены:</b>\n"
-                f"{', '.join(additional_params)}\n\n"
-                "🔄 <b>Начинаю генерацию контента...</b>"
-            )
-        else:
-            await message.answer("🔄 <b>Начинаю генерацию контента без дополнительных параметров...</b>")
-
-        # Сохраняем параметры и начинаем генерацию
-        session.additional_params = additional_params
-        session.current_step = "params_added"
-        session_repo.update(session.id, additional_params=additional_params, current_step="params_added")
-
-        # Показываем кнопку для начала генерации
-        builder = InlineKeyboardBuilder()
-        builder.button(text="🎯 Сгенерировать заголовок", callback_data="generate_title")
-
-        await message.answer(
-            "📊 <b>Готов к генерации!</b>\n\n"
-            f"• <b>Категория:</b> {self._get_category_name(session.category_id)}\n"
-            f"• <b>Назначение:</b> {session.purpose}\n"
-            f"• <b>Доп. параметры:</b> {', '.join(additional_params) if additional_params else 'нет'}\n\n"
-            "Нажмите кнопку ниже чтобы начать генерацию:",
-            reply_markup=builder.as_markup()
-        )
-
-    # app/bot/handlers/generation_handler.py (обновляем методы)
+    # Остальные методы оставляем без изменений, но добавляем проверки на существование репозиториев
     async def handle_generate_title(self, callback: CallbackQuery):
         """Генерация заголовка с реальными сервисами"""
         user_id = callback.from_user.id
+
+        # Проверяем наличие репозиториев
+        if 'session_repo' not in self.repositories or 'category_repo' not in self.repositories:
+            await callback.answer("❌ Репозитории не инициализированы")
+            return
 
         session_repo = self.repositories['session_repo']
         session = session_repo.get_active_session(user_id)
@@ -137,17 +203,21 @@ class GenerationHandler(BaseMessageHandler):
                 return
 
             # Используем сервис для генерации контента
+            if 'content' not in self.services:
+                await callback.message.edit_text("❌ Сервис генерации контента не инициализирован")
+                return
+
             content_service = self.services['content']
 
             category_data = {
-                'system_prompt_filter': category.system_prompt_filter,
-                'system_prompt_title': category.system_prompt_title
+                'system_prompt_filter': getattr(category, 'system_prompt_filter', ''),
+                'system_prompt_title': getattr(category, 'system_prompt_title', '')
             }
 
             result = await content_service.generate_content_workflow(
                 category_name=category.name,
                 purpose=session.purpose,
-                additional_params=session.additional_params,
+                additional_params=session.additional_params if hasattr(session, 'additional_params') else [],
                 category_data=category_data
             )
 
@@ -176,15 +246,13 @@ class GenerationHandler(BaseMessageHandler):
             )
 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка генерации: {e}")
+            self.logger.error(f"❌ Ошибка генерации: {e}", exc_info=True)
             await callback.message.edit_text(
                 f"❌ <b>Ошибка генерации:</b> {str(e)}\n\n"
                 "Попробуйте изменить параметры или начать заново с /reset"
             )
 
         await callback.answer()
-
-
 
     async def handle_generate_short_desc(self, callback: CallbackQuery):
         """Генерация краткого описания"""
@@ -198,6 +266,10 @@ class GenerationHandler(BaseMessageHandler):
         """Генерация обоих описаний"""
         session_id = callback.data.replace("generate_both_", "")
 
+        if 'session_repo' not in self.repositories or 'category_repo' not in self.repositories:
+            await callback.answer("❌ Репозитории не инициализированы")
+            return
+
         session_repo = self.repositories['session_repo']
         session = session_repo.get_by_id(session_id)
 
@@ -210,10 +282,15 @@ class GenerationHandler(BaseMessageHandler):
         try:
             category_repo = self.repositories['category_repo']
             category = category_repo.get_by_id(session.category_id)
+
+            if 'content' not in self.services:
+                await callback.message.edit_text("❌ Сервис генерации контента не инициализирован")
+                return
+
             content_service = self.services['content']
 
             category_data = {
-                'system_prompt_description': category.system_prompt_description
+                'system_prompt_description': getattr(category, 'system_prompt_description', '')
             }
 
             # Генерируем оба описания
@@ -235,17 +312,18 @@ class GenerationHandler(BaseMessageHandler):
             )
 
             # Сохраняем в таблице generated_content
-            content_repo = self.repositories['content_repo']
-            content_repo.create(
-                session_id=session.id,
-                user_id=session.user_id,
-                title=session.generated_title,
-                short_description=short_desc,
-                long_description=long_desc,
-                keywords=session.keywords,
-                category_id=session.category_id,
-                purpose=session.purpose
-            )
+            if 'content_repo' in self.repositories:
+                content_repo = self.repositories['content_repo']
+                content_repo.create(
+                    session_id=session.id,
+                    user_id=session.user_id,
+                    title=session.generated_title,
+                    short_description=short_desc,
+                    long_description=long_desc,
+                    keywords=session.keywords,
+                    category_id=session.category_id,
+                    purpose=session.purpose
+                )
 
             await callback.message.edit_text(
                 f"✅ <b>Оба описания сгенерированы!</b>\n\n"
@@ -264,6 +342,10 @@ class GenerationHandler(BaseMessageHandler):
         """Общий метод генерации описания"""
         session_id = callback.data.replace(f"generate_{desc_type}_", "")
 
+        if 'session_repo' not in self.repositories or 'category_repo' not in self.repositories:
+            await callback.answer("❌ Репозитории не инициализированы")
+            return
+
         session_repo = self.repositories['session_repo']
         session = session_repo.get_by_id(session_id)
 
@@ -277,10 +359,15 @@ class GenerationHandler(BaseMessageHandler):
         try:
             category_repo = self.repositories['category_repo']
             category = category_repo.get_by_id(session.category_id)
+
+            if 'content' not in self.services:
+                await callback.message.edit_text("❌ Сервис генерации контента не инициализирован")
+                return
+
             content_service = self.services['content']
 
             category_data = {
-                'system_prompt_description': category.system_prompt_description
+                'system_prompt_description': getattr(category, 'system_prompt_description', '')
             }
 
             description = await content_service.generate_description_workflow(
@@ -327,6 +414,10 @@ class GenerationHandler(BaseMessageHandler):
         """Подтверждение заголовка"""
         session_id = callback.data.replace("approve_title_", "")
 
+        if 'session_repo' not in self.repositories:
+            await callback.answer("❌ Репозиторий сессий не инициализирован")
+            return
+
         session_repo = self.repositories['session_repo']
         session = session_repo.get_by_id(session_id)
 
@@ -351,57 +442,9 @@ class GenerationHandler(BaseMessageHandler):
 
     def _get_category_name(self, category_id: str) -> str:
         """Получить название категории по ID"""
+        if 'category_repo' not in self.repositories:
+            return "Неизвестно"
+
         category_repo = self.repositories['category_repo']
         category = category_repo.get_by_id(category_id)
         return category.name if category else "Неизвестно"
-
-    async def _get_mock_keywords(self, category: str, purpose: str) -> list:
-        """Заглушка для получения ключевых слов"""
-        await asyncio.sleep(1)  # Имитация задержки
-
-        mock_keywords = {
-            "Электроника/Смартфоны": [
-                "смартфон", "игровой", "производительный", "камера", "батарея",
-                "AMOLED", "процессор", "память", "быстрая зарядка", "Android"
-            ],
-            "Одежда/Обувь": [
-                "одежда", "обувь", "стильная", "комфортная", "качественная",
-                "модная", "удобная", "прочная", "брендовая", "тренд"
-            ]
-        }
-
-        return mock_keywords.get(category, ["качественный", "популярный", purpose])
-
-    async def _filter_keywords(self, keywords: list, additional_params: list) -> list:
-        """Заглушка для фильтрации ключевых слов"""
-        await asyncio.sleep(1)
-
-        # Простая фильтрация - берем первые 8 слов
-        filtered = keywords[:8]
-
-        # Добавляем дополнительные параметры
-        if additional_params:
-            filtered.extend(additional_params[:3])
-
-        return list(set(filtered))  # Убираем дубли
-
-    async def _generate_mock_title(self, category: str, purpose: str, keywords: list) -> str:
-        """Заглушка для генерации заголовка"""
-        await asyncio.sleep(1)
-
-        templates = {
-            "Электроника/Смартфоны": [
-                f"Смартфон {purpose} с {keywords[2]} и {keywords[3]}",
-                f"Мощный смартфон для {purpose} - {keywords[1]}, {keywords[4]}",
-                f"{keywords[0].title()} для {purpose}: {keywords[2]}, {keywords[3]}, {keywords[4]}"
-            ],
-            "Одежда/Обувь": [
-                f"{category.split('/')[0]} для {purpose} - {keywords[1]}, {keywords[2]}",
-                f"Стильная {category.split('/')[0].lower()} для {purpose}",
-                f"{keywords[0].title()} {purpose}: {keywords[1]}, {keywords[2]}, комфорт"
-            ]
-        }
-
-        import random
-        template = templates.get(category, templates["Электроника/Смартфоны"])
-        return random.choice(template)

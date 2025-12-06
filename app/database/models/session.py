@@ -3,6 +3,8 @@ import uuid
 from app.database.models.base import Base, BaseModel
 
 
+
+
 class UserSession(Base, BaseModel):
     __tablename__ = "user_sessions"
 
