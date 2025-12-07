@@ -63,6 +63,51 @@ class CategoryHandler(BaseMessageHandler):
             F.data == "back_to_generation"
         )
         self.router.message.register(self.handle_update_additional_params, F.text & ~F.command)
+        self.router.callback_query.register(self.handle_back_to_categories, F.data == "back_to_categories")
+        self.router.callback_query.register(self.handle_back_to_main_menu, F.data == "back_to_main_menu")
+        self.router.callback_query.register(self.handle_back_to_purpose, F.data == "back_to_purpose")
+        self.router.callback_query.register(self.handle_skip_additional_params, F.data == "skip_additional_params")
+
+    async def handle_back_to_purpose(self, callback: CallbackQuery):
+        """Возврат к выбору назначения"""
+        user_id = callback.from_user.id
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_active_session(user_id)
+
+        if not session:
+            await callback.answer("❌ Сессия не найдена")
+            return
+
+        # Получаем данные категории
+        category_id = session.category_id
+        if not self.categories:
+            await self.load_categories_from_db()
+
+        category_data = self.categories.get(category_id)
+        if not category_data:
+            await callback.answer("❌ Категория не найдена")
+            return
+
+        # Показываем выбор назначения снова
+        builder = InlineKeyboardBuilder()
+        for purpose_id, purpose_name in category_data["purposes"].items():
+            builder.button(
+                text=purpose_name,
+                callback_data=f"purpose_{category_id}_{purpose_id}"
+            )
+
+        builder.button(text="↩️ Назад к категориям", callback_data="back_to_categories")
+        builder.adjust(1)
+
+        await callback.message.edit_text(
+            f"✅ <b>Выбрана категория:</b> {category_data['name']}\n\n"
+            f"📝 {category_data['description']}\n\n"
+            "🎯 <b>Теперь выберите назначение товара:</b>",
+            reply_markup=builder.as_markup()
+        )
+
+        await callback.answer()
 
     async def handle_change_additional_params(self, callback: CallbackQuery):
         """Изменение дополнительных параметров"""
@@ -107,6 +152,7 @@ class CategoryHandler(BaseMessageHandler):
 
         # Запасные варианты
         categories_data = {
+            "123":'123',
             "electronics": "📱 Электроника",
             "clothing": "👕 Одежда и обувь",
             "home": "🏠 Дом и сад",
@@ -227,10 +273,11 @@ class CategoryHandler(BaseMessageHandler):
             await callback.answer("❌ Сессия не найдена")
             return
 
-        # Показываем текущие параметры и предлагаем изменить
+        # Показываем текущие параметры с кнопками навигации
         builder = InlineKeyboardBuilder()
         builder.button(text="📝 Изменить доп. параметры", callback_data="change_additional_params")
         builder.button(text="↩️ Назад к генерации", callback_data="back_to_generation")
+        builder.button(text="🏠 В главное меню", callback_data="back_to_main_menu")
         builder.adjust(1)
 
         category_name = self._get_category_name(session.category_id)
@@ -393,6 +440,7 @@ class CategoryHandler(BaseMessageHandler):
         user_id = callback.from_user.id
         self.logger.info(f"Пользователь {user_id} выбрал способ генерации: {mode}")
 
+
         if 'session_repo' not in self.repositories:
             await callback.answer("❌ Репозитории не инициализированы")
             return
@@ -418,35 +466,27 @@ class CategoryHandler(BaseMessageHandler):
 
             mode_name = "Простая" if mode == 'simple' else "Продвинутая"
             mode_icon = "🚀" if mode == 'simple' else "🤖"
-
+            builder = InlineKeyboardBuilder()
             if mode == 'simple':
-                # Для простой генерации: показываем кнопку для запуска генерации
-                builder = InlineKeyboardBuilder()
-                builder.button(text=f"{mode_icon} Сгенерировать заголовок", callback_data="generate_title")
-                builder.adjust(1)
-
-                await callback.message.edit_text(
-                    f"✅ <b>Способ генерации установлен:</b> {mode_name}\n\n"
-                    "Нажмите кнопку ниже чтобы сгенерировать заголовок:",
-                    reply_markup=builder.as_markup()
-                )
+                builder.button(text=f"{mode_icon} Начать генерацию", callback_data="start_simple_generation")
             else:
-                # Для продвинутой генерации: кнопка для сбора данных
-                builder = InlineKeyboardBuilder()
                 builder.button(text=f"{mode_icon} Собрать данные", callback_data="collect_data")
-                builder.adjust(1)
 
-                await callback.message.edit_text(
-                    f"✅ <b>Способ генерации установлен:</b> {mode_name}\n\n"
-                    "Нажмите кнопку ниже чтобы начать сбор данных с MPStats:",
-                    reply_markup=builder.as_markup()
-                )
+            builder.button(text="↩️ Назад к параметрам", callback_data="change_params")
+            builder.button(text="🏠 В главное меню", callback_data="back_to_main_menu")
+            builder.adjust(1)
+
+            await callback.message.edit_text(
+                f"✅ <b>Способ генерации установлен:</b> {mode_name}\n\n"
+                f"Теперь можно начинать генерацию контента.",
+                reply_markup=builder.as_markup()
+            )
 
         except Exception as e:
             self.logger.error(f"Ошибка установки способа генерации: {e}")
             await callback.answer("❌ Ошибка сохранения")
 
-    async def show_categories(self, message: Message):
+    async def show_categories(self, message: Message, from_back: bool = False):
         """Показать список категорий"""
         user_id = message.from_user.id
 
@@ -461,15 +501,6 @@ class CategoryHandler(BaseMessageHandler):
             )
             return
 
-        # Сначала создаем/получаем пользователя
-        user_repo = self.repositories['user_repo']
-        user = user_repo.get_or_create(
-            telegram_id=user_id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-            last_name=message.from_user.last_name
-        )
-
         # Создаем клавиатуру с категориями
         builder = InlineKeyboardBuilder()
         for category_id, category_data in self.categories.items():
@@ -477,10 +508,19 @@ class CategoryHandler(BaseMessageHandler):
                 text=category_data["name"],
                 callback_data=f"category_{category_id}"
             )
+
+        # Добавляем кнопку "Назад" если это возврат из более глубокого меню
+        if from_back:
+            builder.button(text="↩️ Назад в меню", callback_data="back_to_main_menu")
+
         builder.adjust(1)
 
+        welcome_text = "📁 <b>Выберите категорию товара:</b>"
+        if from_back:
+            welcome_text = "📁 <b>Выберите категорию товара:</b>\n\nВы вернулись к выбору категории."
+
         await message.answer(
-            "📁 <b>Выберите категорию товара:</b>",
+            welcome_text,
             reply_markup=builder.as_markup()
         )
 
@@ -498,48 +538,25 @@ class CategoryHandler(BaseMessageHandler):
             await callback.answer("❌ Категория не найдена")
             return
 
-        # Сначала создаем/получаем пользователя
-        user_repo = self.repositories['user_repo']
-        user = user_repo.get_or_create(
-            telegram_id=user_id,
-            username=callback.from_user.username,
-            first_name=callback.from_user.first_name,
-            last_name=callback.from_user.last_name
+        # Показываем выбор назначения с кнопкой "Назад"
+        builder = InlineKeyboardBuilder()
+        for purpose_id, purpose_name in category_data["purposes"].items():
+            builder.button(
+                text=purpose_name,
+                callback_data=f"purpose_{category_id}_{purpose_id}"
+            )
+
+        # Кнопка "Назад" к выбору категорий
+        builder.button(text="↩️ Назад к категориям", callback_data="back_to_categories")
+        builder.adjust(1)
+
+        await callback.message.edit_text(
+            f"✅ <b>Выбрана категория:</b> {category_data['name']}\n\n"
+            f"📝 {category_data['description']}\n\n"
+            "🎯 <b>Теперь выберите назначение товара:</b>",
+            reply_markup=builder.as_markup()
         )
-
-        # Сохраняем в сессию
-        session_repo = self.repositories['session_repo']
-        try:
-            session = session_repo.create_new_session(
-                user_id=user_id,
-                category_id=category_id,
-                current_step="category_selected"
-            )
-
-            # Показываем выбор назначения
-            builder = InlineKeyboardBuilder()
-            for purpose_id, purpose_name in category_data["purposes"].items():
-                builder.button(
-                    text=purpose_name,
-                    callback_data=f"purpose_{category_id}_{purpose_id}"
-                )
-            builder.adjust(1)
-
-            await callback.message.edit_text(
-                f"✅ <b>Выбрана категория:</b> {category_data['name']}\n\n"
-                f"📝 {category_data['description']}\n\n"
-                "🎯 <b>Теперь выберите назначение товара:</b>",
-                reply_markup=builder.as_markup()
-            )
-            await callback.answer()
-
-        except Exception as e:
-            self.logger.error(f"❌ Error creating session: {e}")
-            await callback.message.edit_text(
-                "❌ <b>Ошибка при создании сессии</b>\n"
-                "Попробуйте еще раз или обратитесь к администратору."
-            )
-            await callback.answer()
+        await callback.answer()
 
     async def handle_purpose_select(self, callback: CallbackQuery):
         """Обработка выбора назначения"""
@@ -593,14 +610,91 @@ class CategoryHandler(BaseMessageHandler):
             current_step="purpose_selected"
         )
 
-        await callback.message.edit_text(
-            f"✅ <b>Категория:</b> {category_data['name']}\n"
-            f"✅ <b>Назначение:</b> {purpose_name}\n\n"
-            "📋 <b>Хотите добавить дополнительные параметры?</b>\n"
-            "<i>Напишите через запятую, например: 'высокая производительность, AMOLED дисплей, долгая батарея'</i>\n\n"
-            "🔸 Или отправьте <code>нет</code> чтобы продолжить без доп. параметров"
-        )
+        await self.show_additional_params_request(callback.message, session)
         await callback.answer()
+
+    async def handle_back_to_categories(self, callback: CallbackQuery):
+        """Возврат к выбору категорий"""
+        await callback.answer()
+        await self.show_categories(callback.message, from_back=True)
+
+    async def handle_back_to_main_menu(self, callback: CallbackQuery):
+        """Возврат в главное меню"""
+        await callback.answer()
+        # Имитируем команду /start
+        from app.bot.handlers.start_handler import StartHandler
+        # Или можно отправить сообщение, которое обработается start_handler
+        await callback.message.answer("Возвращаемся в главное меню...")
+        # Проще всего отправить команду /start
+        await callback.message.answer("/start")
+
+    async def show_additional_params_request(self, message: Message, session, from_back: bool = False):
+        """Показать запрос дополнительных параметров с кнопками"""
+        builder = InlineKeyboardBuilder()
+        builder.button(text="✅ Не указывать доп. параметры", callback_data="skip_additional_params")
+        builder.button(text="↩️ Назад к назначению", callback_data="back_to_purpose")
+        builder.adjust(1)
+
+        welcome_text = (
+            "📋 <b>Хотите добавить дополнительные параметры?</b>\n\n"
+            "<i>Например: 'высокая производительность, AMOLED дисплей, долгая батарея'</i>\n\n"
+            "📝 <b>Отправьте параметры через запятую:</b>"
+        )
+
+        if from_back:
+            welcome_text = (
+                "📋 <b>Добавьте дополнительные параметры:</b>\n\n"
+                "<i>Или нажмите 'Не указывать доп. параметры'</i>\n\n"
+                "📝 <b>Отправьте параметры через запятую:</b>"
+            )
+
+        await message.answer(
+            welcome_text,
+            reply_markup=builder.as_markup()
+        )
+
+    async def handle_skip_additional_params(self, callback: CallbackQuery):
+        """Пропуск дополнительных параметров"""
+        user_id = callback.from_user.id
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_active_session(user_id)
+
+        if not session:
+            await callback.answer("❌ Сессия не найдена")
+            return
+
+        # Сохраняем пустые параметры
+        session.additional_params = []
+        session.current_step = "params_added"
+
+        session_repo.update(
+            session.id,
+            additional_params=[],
+            current_step="params_added"
+        )
+
+        # Показываем выбор способа генерации
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🚀 Простая генерация", callback_data="set_gen_mode_simple")
+        builder.button(text="🤖 Продвинутая генерация", callback_data="set_gen_mode_advanced")
+        builder.adjust(1)
+
+        await callback.message.edit_text(
+            "✅ <b>Дополнительные параметры не указаны</b>\n\n"
+            "🎛️ <b>Выберите способ генерации контента:</b>\n\n"
+            "<b>🚀 Простая генерация:</b>\n"
+            "• Быстрое создание контента\n"
+            "• На основе категории и назначения\n\n"
+            "<b>🤖 Продвинутая генерация:</b>\n"
+            "• Анализ ключевых слов с MPStats\n"
+            "• Глубокая оптимизация\n\n"
+            "<i>Продвинутая генерация дает более точные результаты.</i>",
+            reply_markup=builder.as_markup()
+        )
+
+        await callback.answer()
+
 
     async def handle_additional_params(self, message: Message):
         """Обработка ввода дополнительных параметров"""
@@ -618,12 +712,30 @@ class CategoryHandler(BaseMessageHandler):
         self.logger.info(f"=== handle_additional_params: user_id={user_id}, session={session is not None}")
         if session:
             self.logger.info(f"Текущий шаг сессии: {getattr(session, 'current_step', 'N/A')}")
+            self.logger.info(f"is_changing_params: {getattr(session, 'is_changing_params', False)}")
 
-        if not session or session.current_step != "purpose_selected":
+        # Проверяем два сценария:
+        # 1. Стандартный сценарий: пользователь только что выбрал назначение
+        # 2. Сценарий изменения параметров: установлен флаг is_changing_params
+        if not session:
             # Не выводим сообщение, если это не наш шаг
             return
 
-        # Обрабатываем параметры
+        # Сценарий 1: стандартный ввод параметров после выбора назначения
+        if session.current_step == "purpose_selected":
+            await self._handle_initial_params_input(message, session)
+            return
+
+        # Сценарий 2: изменение параметров после генерации
+        if getattr(session, 'is_changing_params', False):
+            await self._handle_update_params_input(message, session)
+            return
+
+        # Если не наш шаг, просто выходим
+        return
+
+    async def _handle_initial_params_input(self, message: Message, session):
+        """Обработка первоначального ввода параметров"""
         params_text = message.text.strip().lower()
         additional_params = []
 
@@ -635,14 +747,15 @@ class CategoryHandler(BaseMessageHandler):
         else:
             success_message = "✅ <b>Дополнительные параметры не указаны</b>"
 
-        # Сохраняем параметры в сессию
+        # Сохраняем параметры в сессии
         session.additional_params = additional_params
         session.current_step = "params_added"
 
         self.logger.info(
             f"🔄 Обновляем сессию {session.id}: additional_params={additional_params}, current_step=params_added")
 
-        # Обновляем сессию в базе данных (используем update, а не update_session)
+        # Обновляем сессию в базе данных
+        session_repo = self.repositories['session_repo']
         updated_session = session_repo.update(
             session.id,
             additional_params=additional_params,
@@ -654,7 +767,7 @@ class CategoryHandler(BaseMessageHandler):
         else:
             self.logger.error("❌ Сессия не обновлена!")
 
-        # Показываем выбор способа генерации в ОДНОМ сообщении
+        # Показываем выбор способа генерации
         builder = InlineKeyboardBuilder()
         builder.button(text="🚀 Простая генерация", callback_data="set_gen_mode_simple")
         builder.button(text="🤖 Продвинутая генерация", callback_data="set_gen_mode_advanced")
@@ -674,6 +787,54 @@ class CategoryHandler(BaseMessageHandler):
             "• Использует MPStats + OpenAI API\n\n"
 
             "<i>Продвинутая генерация дает более точные и оптимизированные результаты.</i>",
+            reply_markup=builder.as_markup()
+        )
+
+    async def _handle_update_params_input(self, message: Message, session):
+        """Обработка обновления параметров после генерации"""
+        session_repo = self.repositories['session_repo']
+
+        params_text = message.text.strip()
+
+        # Проверяем отмену
+        if params_text.lower() == "отмена":
+            session.is_changing_params = False
+            session_repo.update(session.id, is_changing_params=False)
+
+            await message.answer("❌ Изменение параметров отменено")
+            return
+
+        additional_params = []
+
+        if params_text.lower() != "нет":
+            # Разбиваем параметры по запятой
+            additional_params = [param.strip() for param in params_text.split(',') if param.strip()]
+
+        # Обновляем параметры в сессии
+        session.additional_params = additional_params
+        session.is_changing_params = False
+        session_repo.update(
+            session.id,
+            additional_params=additional_params,
+            is_changing_params=False
+        )
+
+        # Получаем название категории для сообщения
+        category_name = self._get_category_name(session.category_id)
+
+        # Показываем обновленные параметры
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🔄 Сгенерировать с новыми параметрами", callback_data="generate_title")
+        builder.button(text="📝 Изменить еще раз", callback_data="change_additional_params")
+        builder.button(text="↩️ Назад к параметрам", callback_data="change_params")
+        builder.adjust(1)
+
+        await message.answer(
+            f"✅ <b>Параметры товара обновлены:</b>\n\n"
+            f"📁 <b>Категория:</b> {category_name}\n"
+            f"🎯 <b>Назначение:</b> {session.purpose}\n"
+            f"📝 <b>Доп. параметры:</b> {', '.join(additional_params) if additional_params else 'нет'}\n\n"
+            "Что делаем дальше?",
             reply_markup=builder.as_markup()
         )
 
