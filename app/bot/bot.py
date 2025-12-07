@@ -78,31 +78,43 @@ class ContentGeneratorBot:
         from app.services.openai_service import OpenAIService
         from app.services.content_service import ContentService
         from app.services.mpstats_scraper_service import MPStatsScraperService
+        from app.utils.data_gen_service import DataGenService
+        from app.utils.keywords_processor import KeywordsProcessor
 
         try:
-            # Инициализируем скрапер с конфигом
-            scraper_service = MPStatsScraperService(self.config)
-            await scraper_service.initialize_scraper()
-
-            # Инициализируем другие сервисы
+            # Инициализируем сервисы
             mpstats_service = MPStatsService()
             openai_service = OpenAIService()
 
             # Инициализируем ContentService с зависимостями
             content_service = ContentService(mpstats_service, openai_service)
 
+            # Инициализируем скрапер с конфигом (только для продвинутой генерации)
+            scraper_service = MPStatsScraperService(self.config)
+            await scraper_service.initialize_scraper()
+
+            data_gen_service = DataGenService(self.config)
+            keywords_processor = KeywordsProcessor(preserve_excel=False, target_column="Кластер WB")
+
             self.services = {
                 'mpstats': mpstats_service,
                 'openai': openai_service,
                 'content': content_service,
-                'scraper': scraper_service
+                'scraper': scraper_service,  # Только для продвинутой генерации
+                'data_gen': data_gen_service,  # Только для продвинутой генерации
+                'keywords_processor': keywords_processor  # Только для продвинутой генерации
             }
 
             self.logger.info("✅ Services initialized")
+            self.logger.info(f"Available services: {list(self.services.keys())}")
 
         except Exception as e:
             self.logger.error(f"❌ Error initializing services: {e}")
-            self.services = {}
+            # В случае ошибки инициализируем только базовые сервисы
+            self.services = {
+                'openai': OpenAIService(),
+                'content': ContentService(None, OpenAIService())
+            }
 
     async def _initialize_aiogram(self):
         """Инициализация aiogram"""
@@ -150,10 +162,10 @@ class ContentGeneratorBot:
                 await self.bot.session.close()
                 self.logger.info("✅ Bot session closed")
 
-            # Очистка временных файлов скрапера
-            if 'scraper' in self.services:
-                self.services['scraper'].cleanup_downloads()
-                self.logger.info("✅ Scraper downloads cleaned")
+            # ЗАКОММЕНТИРУЕМ или удаляем этот вызов
+            # if 'scraper' in self.services:
+            #     self.services['scraper'].cleanup_downloads()
+            #     self.logger.info("✅ Scraper downloads cleaned")
 
             from app.database.database import database
             if database:

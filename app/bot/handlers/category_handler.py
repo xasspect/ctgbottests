@@ -5,6 +5,8 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.bot.handlers.base_handler import BaseMessageHandler
+from aiogram.types import CallbackQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 class CategoryHandler(BaseMessageHandler):
@@ -14,50 +16,7 @@ class CategoryHandler(BaseMessageHandler):
         super().__init__(config, services, repositories)
         self.router = Router()
         self.scraper_service = services.get('scraper')
-
-        # Пример категорий и назначений
-        self.categories = {
-            "electronics": {
-                "name": "📱 Электроника",
-                "description": "Смартфоны, планшеты, гаджеты и аксессуары",
-                "purposes": {
-                    "gaming": "🎮 Для игр",
-                    "everyday": "📅 Повседневная",
-                    "business": "💼 Бизнес",
-                    "creative": "🎨 Для творчества"
-                }
-            },
-            "clothing": {
-                "name": "👕 Одежда и обувь",
-                "description": "Одежда, обувь и аксессуары",
-                "purposes": {
-                    "sport": "🏃‍♂️ Спортивная",
-                    "casual": "👖 Повседневная",
-                    "office": "👔 Офисная",
-                    "evening": "🌙 Вечерняя"
-                }
-            },
-            "home": {
-                "name": "🏠 Дом и сад",
-                "description": "Товары для дома, мебель, декор",
-                "purposes": {
-                    "kitchen": "🍳 Для кухни",
-                    "bedroom": "🛏 Для спальни",
-                    "garden": "🌳 Для сада",
-                    "bathroom": "🛁 Для ванной"
-                }
-            },
-            "beauty": {
-                "name": "💄 Красота и здоровье",
-                "description": "Косметика, уход, здоровый образ жизни",
-                "purposes": {
-                    "skincare": "🧴 Уход за кожей",
-                    "makeup": "💋 Макияж",
-                    "hair": "💇‍♀️ Для волос",
-                    "wellness": "🌿 Для здоровья"
-                }
-            }
-        }
+        self.categories = {}  # Будем заполнять из базы данных
 
     async def register(self, dp):
         """Регистрация обработчиков"""
@@ -74,13 +33,433 @@ class CategoryHandler(BaseMessageHandler):
         self.router.message.register(self.handle_additional_params, F.text & ~F.command)
         self.router.callback_query.register(self.handle_category_select, F.data.startswith("category_"))
         self.router.callback_query.register(self.handle_purpose_select, F.data.startswith("purpose_"))
-
-        # Новая команда для запуска скрапера
+        self.router.callback_query.register(
+            self.handle_set_gen_mode_simple,
+            F.data == "set_gen_mode_simple"
+        )
+        self.router.callback_query.register(
+            self.handle_set_gen_mode_advanced,
+            F.data == "set_gen_mode_advanced"
+        )
+        self.router.callback_query.register(
+            self.handle_go_to_generate,
+            F.data == "go_to_generate"
+        )
         self.router.message.register(self.start_scraping, Command(commands=["scrape"]))
+        self.router.callback_query.register(
+            self.handle_start_generation,
+            F.data.startswith("start_generation_")
+        )
+        self.router.callback_query.register(
+            self.handle_change_params,
+            F.data == "change_params"
+        )
+        self.router.callback_query.register(
+            self.handle_change_additional_params,
+            F.data == "change_additional_params"
+        )
+        self.router.callback_query.register(
+            self.handle_back_to_generation,
+            F.data == "back_to_generation"
+        )
+        self.router.message.register(self.handle_update_additional_params, F.text & ~F.command)
+
+    async def handle_change_additional_params(self, callback: CallbackQuery):
+        """Изменение дополнительных параметров"""
+        user_id = callback.from_user.id
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_active_session(user_id)
+
+        if not session:
+            await callback.answer("❌ Сессия не найдена")
+            return
+
+        # Просим ввести новые дополнительные параметры
+        await callback.message.edit_text(
+            f"📝 <b>Текущие дополнительные параметры:</b>\n"
+            f"{', '.join(session.additional_params) if session.additional_params else 'нет'}\n\n"
+            "✏️ <b>Введите новые дополнительные параметры:</b>\n"
+            "<i>Напишите через запятую, например: 'высокая производительность, AMOLED дисплей, долгая батарея'</i>\n\n"
+            "🔸 Или отправьте <code>нет</code> чтобы оставить без доп. параметров\n"
+            "🔸 Для отмены отправьте <code>отмена</code>",
+            parse_mode="HTML"
+        )
+
+        # Устанавливаем специальный флаг в сессии для отслеживания состояния изменения параметров
+        session.is_changing_params = True
+        session_repo.update(
+            session.id,
+            is_changing_params=True
+        )
+
+        await callback.answer()
+
+    # Добавьте этот метод в класс CategoryHandler:
+
+    def _get_category_name(self, category_id: str) -> str:
+        """Получить название категории по ID"""
+        if 'category_repo' in self.repositories:
+            category_repo = self.repositories['category_repo']
+            category = category_repo.get_by_id(category_id)
+            if category:
+                return category.name
+
+        # Запасные варианты
+        categories_data = {
+            "electronics": "📱 Электроника",
+            "clothing": "👕 Одежда и обувь",
+            "home": "🏠 Дом и сад",
+            "beauty": "💄 Красота и здоровье"
+        }
+
+        return categories_data.get(category_id, "Неизвестная категория")
+
+    async def handle_update_additional_params(self, message: Message):
+        """Обработка обновления дополнительных параметров"""
+        user_id = message.from_user.id
+
+        # Игнорируем команды
+        if message.text and message.text.startswith('/'):
+            return
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_active_session(user_id)
+
+        if not session or not getattr(session, 'is_changing_params', False):
+            # Не наш шаг
+            return
+
+        params_text = message.text.strip().lower()
+
+        # Проверяем отмену
+        if params_text == "отмена":
+            session.is_changing_params = False
+            session_repo.update(session.id, is_changing_params=False)
+
+            await message.answer("❌ Изменение параметров отменено")
+            return
+
+        additional_params = []
+
+        if params_text != "нет":
+            # Разбиваем параметры по запятой
+            additional_params = [param.strip() for param in params_text.split(',') if param.strip()]
+
+        # Обновляем параметры в сессии
+        session.additional_params = additional_params
+        session.is_changing_params = False
+        session_repo.update(
+            session.id,
+            additional_params=additional_params,
+            is_changing_params=False
+        )
+
+        # Показываем обновленные параметры
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🔄 Сгенерировать с новыми параметрами", callback_data="generate_title")
+        builder.button(text="📝 Изменить еще раз", callback_data="change_additional_params")
+        builder.button(text="↩️ Назад к параметрам", callback_data="change_params")
+        builder.adjust(1)
+
+        await message.answer(
+            f"✅ <b>Дополнительные параметры обновлены:</b>\n"
+            f"{', '.join(additional_params) if additional_params else 'нет'}\n\n"
+            "Что делаем дальше?",
+            reply_markup=builder.as_markup()
+        )
+
+    async def handle_back_to_generation(self, callback: CallbackQuery):
+        """Возврат к генерации после изменения параметров"""
+        user_id = callback.from_user.id
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_active_session(user_id)
+
+        if not session:
+            await callback.answer("❌ Сессия не найдена")
+            return
+
+        # В зависимости от режима показываем соответствующую кнопку
+        if session.generation_mode == 'simple':
+            builder = InlineKeyboardBuilder()
+            builder.button(text="🚀 Сгенерировать заголовок", callback_data="generate_title")
+            builder.adjust(1)
+
+            await callback.message.edit_text(
+                "✅ <b>Параметры обновлены!</b>\n\n"
+                "Нажмите кнопку ниже чтобы сгенерировать новый заголовок:",
+                reply_markup=builder.as_markup()
+            )
+        else:
+            # Для продвинутого режима проверяем, собраны ли данные
+            if session.current_step == "data_scraped":
+                builder = InlineKeyboardBuilder()
+                builder.button(text="🤖 Сгенерировать заголовок", callback_data="generate_title")
+                builder.adjust(1)
+
+                await callback.message.edit_text(
+                    "✅ <b>Параметры обновлены!</b>\n\n"
+                    "Нажмите кнопку ниже чтобы сгенерировать новый заголовок:",
+                    reply_markup=builder.as_markup()
+                )
+            else:
+                builder = InlineKeyboardBuilder()
+                builder.button(text="🔍 Собрать данные", callback_data="collect_data")
+                builder.adjust(1)
+
+                await callback.message.edit_text(
+                    "✅ <b>Параметры обновлены!</b>\n\n"
+                    "Для продвинутой генерации сначала соберите данные:",
+                    reply_markup=builder.as_markup()
+                )
+
+        await callback.answer()
+
+    async def handle_change_params(self, callback: CallbackQuery):
+        """Изменение параметров товара"""
+        user_id = callback.from_user.id
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_active_session(user_id)
+
+        if not session:
+            await callback.answer("❌ Сессия не найдена")
+            return
+
+        # Показываем текущие параметры и предлагаем изменить
+        builder = InlineKeyboardBuilder()
+        builder.button(text="📝 Изменить доп. параметры", callback_data="change_additional_params")
+        builder.button(text="↩️ Назад к генерации", callback_data="back_to_generation")
+        builder.adjust(1)
+
+        category_name = self._get_category_name(session.category_id)
+
+        await callback.message.edit_text(
+            f"📋 <b>Текущие параметры товара:</b>\n\n"
+            f"📁 <b>Категория:</b> {category_name}\n"
+            f"🎯 <b>Назначение:</b> {session.purpose}\n"
+            f"📝 <b>Доп. параметры:</b> {', '.join(session.additional_params) if session.additional_params else 'нет'}\n\n"
+            f"Выберите что хотите изменить:",
+            reply_markup=builder.as_markup()
+        )
+
+        await callback.answer()
+
+
+    async def handle_start_generation(self, callback: CallbackQuery):
+        """Обработка кнопки "Начать генерацию" в зависимости от режима"""
+        user_id = callback.from_user.id
+        mode = callback.data.replace("start_generation_", "")
+
+        await callback.answer()
+
+        if 'session_repo' not in self.repositories:
+            await callback.message.answer("❌ Репозитории не инициализированы")
+            return
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_active_session(user_id)
+
+        if not session:
+            await callback.message.answer("❌ Сессия не найдена")
+            return
+
+        # Проверяем, что режим совпадает
+        if session.generation_mode != mode:
+            await callback.message.answer("❌ Несоответствие режимов генерации")
+            return
+
+        if mode == 'simple':
+            # Для простой генерации: сразу запускаем генерацию заголовка
+            await callback.message.edit_text("🚀 <b>Запускаю простую генерацию...</b>")
+
+            # Передаем управление в generation_handler
+            # Нам нужно получить доступ к generation_handler
+            # Для этого лучше всего отправить сообщение, которое обработается generation_handler
+            await callback.message.answer("Запускаю генерацию контента...")
+            # Или создаем искусственный CallbackQuery для generation_handler
+            await self._trigger_simple_generation(callback.message, session)
+
+        else:  # advanced
+            # Для продвинутой генерации: запускаем сбор данных
+            await callback.message.edit_text("🔍 <b>Запускаю сбор данных с MPStats...</b>")
+
+            # Здесь будет логика запуска скрапера
+            # Пока заглушка - перенаправляем в generation_handler
+            await callback.message.answer("Сбор данных запущен...")
+            await self._trigger_advanced_generation(callback.message, session)
+
+    async def _trigger_simple_generation(self, message: Message, session):
+        """Запуск простой генерации через generation_handler"""
+        # Нам нужен доступ к generation_handler
+        # Лучше всего через бота
+        from app.bot.handlers import generation_handler
+
+        # Альтернатива: отправим команду /generate_simple
+        await message.answer("Используйте /generate для запуска генерации")
+        # Или создадим искусственное сообщение
+        # fake_message = Message(...)
+        # await generation_handler._generate_title_simple(fake_message, session)
+
+    async def load_categories_from_db(self):
+        """Загрузка категорий из базы данных"""
+        try:
+            category_repo = self.repositories.get('category_repo')
+            if not category_repo:
+                self.logger.error("❌ Category repository not found!")
+                return
+
+            # Загружаем все категории
+            categories = category_repo.get_all()
+
+            if not categories:
+                self.logger.warning("⚠️ No categories found in database!")
+                return
+
+            # Преобразуем в удобный формат
+            self.categories = {}
+            for category in categories:
+                self.categories[category.id] = {
+                    "name": category.name,
+                    "description": category.description,
+                    "purposes": category.purposes if category.purposes else {}
+                }
+
+            self.logger.info(f"✅ Загружено {len(self.categories)} категорий из базы данных")
+
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка загрузки категорий: {e}")
+    async def show_generation_mode_selection(self, message: Message):
+        """Показать выбор способа генерации после заполнения параметров"""
+        user_id = message.from_user.id
+        self.logger.info(f"Пользователь {user_id} выбирает способ генерации")
+
+        if 'session_repo' not in self.repositories:
+            await message.answer("❌ Ошибка: репозитории не инициализированы")
+            return
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_active_session(user_id)
+
+        if not session:
+            await message.answer("❌ Сначала завершите настройку товара")
+            return
+
+        if session.current_step != "params_added":
+            await message.answer("❌ Сначала укажите дополнительные параметры")
+            return
+
+        # Показываем выбор способа генерации
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🚀 Простая генерация", callback_data="set_gen_mode_simple")
+        builder.button(text="🤖 Продвинутая генерация", callback_data="set_gen_mode_advanced")
+        builder.adjust(1)
+
+        await message.answer(
+            "🎛️ <b>Выберите способ генерации контента:</b>\n\n"
+            "<b>🚀 Простая генерация:</b>\n"
+            "• Быстрое создание контента\n"
+            "• На основе категории и назначения\n"
+            "• Использует только OpenAI API\n\n"
+
+            "<b>🤖 Продвинутая генерация:</b>\n"
+            "• Анализ ключевых слов с MPStats\n"
+            "• Глубокая оптимизация для маркетплейсов\n"
+            "• Использует MPStats + OpenAI API\n\n"
+
+            "<i>Продвинутая генерация дает более точные и оптимизированные результаты.</i>",
+            reply_markup=builder.as_markup()
+        )
+
+
+    async def handle_go_to_generate(self, callback: CallbackQuery):
+        """Перейти к генерации"""
+        user_id = callback.from_user.id
+        await callback.answer("✅ Способ генерации сохранен")
+        await callback.message.answer("Теперь используйте команду /generate для создания контента")
+
+    async def handle_set_gen_mode_simple(self, callback: CallbackQuery):
+        """Установить простой способ генерации"""
+        await self._set_generation_mode(callback, 'simple')
+
+    async def handle_set_gen_mode_advanced(self, callback: CallbackQuery):
+        """Установить продвинутый способ генерации"""
+        await self._set_generation_mode(callback, 'advanced')
+
+    # В category_handler.py - метод _set_generation_mode:
+    async def _set_generation_mode(self, callback: CallbackQuery, mode: str):
+        """Общий метод установки способа генерации"""
+        user_id = callback.from_user.id
+        self.logger.info(f"Пользователь {user_id} выбрал способ генерации: {mode}")
+
+        if 'session_repo' not in self.repositories:
+            await callback.answer("❌ Репозитории не инициализированы")
+            return
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_active_session(user_id)
+
+        if not session:
+            await callback.answer("❌ Сначала завершите настройку товара")
+            return
+
+        try:
+            # Обновляем сессию
+            session.generation_mode = mode
+            session.current_step = "generation_mode_selected"
+
+            # Используем update метод репозитория
+            session_repo.update(
+                session.id,
+                generation_mode=mode,
+                current_step="generation_mode_selected"
+            )
+
+            mode_name = "Простая" if mode == 'simple' else "Продвинутая"
+            mode_icon = "🚀" if mode == 'simple' else "🤖"
+
+            if mode == 'simple':
+                # Для простой генерации: показываем кнопку для запуска генерации
+                builder = InlineKeyboardBuilder()
+                builder.button(text=f"{mode_icon} Сгенерировать заголовок", callback_data="generate_title")
+                builder.adjust(1)
+
+                await callback.message.edit_text(
+                    f"✅ <b>Способ генерации установлен:</b> {mode_name}\n\n"
+                    "Нажмите кнопку ниже чтобы сгенерировать заголовок:",
+                    reply_markup=builder.as_markup()
+                )
+            else:
+                # Для продвинутой генерации: кнопка для сбора данных
+                builder = InlineKeyboardBuilder()
+                builder.button(text=f"{mode_icon} Собрать данные", callback_data="collect_data")
+                builder.adjust(1)
+
+                await callback.message.edit_text(
+                    f"✅ <b>Способ генерации установлен:</b> {mode_name}\n\n"
+                    "Нажмите кнопку ниже чтобы начать сбор данных с MPStats:",
+                    reply_markup=builder.as_markup()
+                )
+
+        except Exception as e:
+            self.logger.error(f"Ошибка установки способа генерации: {e}")
+            await callback.answer("❌ Ошибка сохранения")
 
     async def show_categories(self, message: Message):
         """Показать список категорий"""
         user_id = message.from_user.id
+
+        # Загружаем категории из базы, если еще не загружены
+        if not self.categories:
+            await self.load_categories_from_db()
+
+        if not self.categories:
+            await message.answer(
+                "❌ <b>Категории не найдены!</b>\n\n"
+                "Пожалуйста, сообщите администратору для настройки категорий."
+            )
+            return
 
         # Сначала создаем/получаем пользователя
         user_repo = self.repositories['user_repo']
@@ -107,8 +486,12 @@ class CategoryHandler(BaseMessageHandler):
 
     async def handle_category_select(self, callback: CallbackQuery):
         """Обработка выбора категории"""
-        user_id = callback.from_user.id
+        user_id = str(callback.from_user.id)
         category_id = callback.data.replace("category_", "")
+
+        # Проверяем, загружены ли категории
+        if not self.categories:
+            await self.load_categories_from_db()
 
         category_data = self.categories.get(category_id)
         if not category_data:
@@ -168,6 +551,11 @@ class CategoryHandler(BaseMessageHandler):
             return
 
         category_id, purpose_id = data_parts
+
+        # Проверяем, загружены ли категории
+        if not self.categories:
+            await self.load_categories_from_db()
+
         category_data = self.categories.get(category_id)
 
         if not category_data:
@@ -235,7 +623,7 @@ class CategoryHandler(BaseMessageHandler):
             # Не выводим сообщение, если это не наш шаг
             return
 
-        # Остальной код без изменений...
+        # Обрабатываем параметры
         params_text = message.text.strip().lower()
         additional_params = []
 
@@ -243,25 +631,18 @@ class CategoryHandler(BaseMessageHandler):
             # Разбиваем параметры по запятой
             additional_params = [param.strip() for param in params_text.split(',') if param.strip()]
 
-            await message.answer(
-                f"✅ <b>Дополнительные параметры сохранены:</b>\n"
-                f"{', '.join(additional_params)}\n\n"
-                "🔄 <b>Готов к сбору данных!</b>\n\n"
-                "Используйте <code>/generate</code> чтобы начать сбор данных с MPStats"
-            )
+            success_message = f"✅ <b>Дополнительные параметры сохранены:</b>\n{', '.join(additional_params)}"
         else:
-            await message.answer(
-                "🔄 <b>Готов к сбору данных без дополнительных параметров!</b>\n\n"
-                "Используйте <code>/generate</code> чтобы начать сбор данных с MPStats"
-            )
+            success_message = "✅ <b>Дополнительные параметры не указаны</b>"
 
-        # Сохраняем параметры
+        # Сохраняем параметры в сессию
         session.additional_params = additional_params
         session.current_step = "params_added"
 
         self.logger.info(
             f"🔄 Обновляем сессию {session.id}: additional_params={additional_params}, current_step=params_added")
 
+        # Обновляем сессию в базе данных (используем update, а не update_session)
         updated_session = session_repo.update(
             session.id,
             additional_params=additional_params,
@@ -272,6 +653,29 @@ class CategoryHandler(BaseMessageHandler):
             self.logger.info(f"✅ Сессия обновлена: ID={updated_session.id}, Шаг={updated_session.current_step}")
         else:
             self.logger.error("❌ Сессия не обновлена!")
+
+        # Показываем выбор способа генерации в ОДНОМ сообщении
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🚀 Простая генерация", callback_data="set_gen_mode_simple")
+        builder.button(text="🤖 Продвинутая генерация", callback_data="set_gen_mode_advanced")
+        builder.adjust(1)
+
+        await message.answer(
+            f"{success_message}\n\n"
+            "🎛️ <b>Выберите способ генерации контента:</b>\n\n"
+            "<b>🚀 Простая генерация:</b>\n"
+            "• Быстрое создание контента\n"
+            "• На основе категории и назначения\n"
+            "• Использует только OpenAI API\n\n"
+
+            "<b>🤖 Продвинутая генерация:</b>\n"
+            "• Анализ ключевых слов с MPStats\n"
+            "• Глубокая оптимизация для маркетплейсов\n"
+            "• Использует MPStats + OpenAI API\n\n"
+
+            "<i>Продвинутая генерация дает более точные и оптимизированные результаты.</i>",
+            reply_markup=builder.as_markup()
+        )
 
     async def start_scraping(self, message: Message):
         """Запуск скрапинга"""

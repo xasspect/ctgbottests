@@ -55,6 +55,24 @@ class OpenAIService:
             self.logger.error(f"❌ Ошибка фильтрации ключевых слов: {e}")
             return keywords[:8]  # Возвращаем первые 8 в случае ошибки
 
+    async def generate_text(self, prompt: str, max_tokens: int = 200, temperature: float = 0.7) -> str:
+        """Прямая генерация текста по промпту"""
+        try:
+            response = await self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+
+            return response.choices[0].message.content.strip()
+
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка генерации текста: {e}")
+            return ""
+
     async def generate_title(self, category: str, purpose: str,
                              keywords: List[str], additional_params: List[str] = None,
                              system_prompt: str = None) -> str:

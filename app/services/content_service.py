@@ -56,6 +56,55 @@ class ContentService:
             "additional_params": additional_params or []
         }
 
+    # app/services/content_service.py
+    async def generate_simple_content(self, category_name: str, purpose: str, additional_params: list) -> dict:
+        """Простая генерация контента без MPStats"""
+        try:
+            # Генерация заголовка
+            title_prompt = f"""
+            Создай продающий заголовок для товара на маркетплейсе.
+            Категория: {category_name}
+            Назначение: {purpose}
+            Дополнительные параметры: {', '.join(additional_params) if additional_params else 'нет'}
+
+            Заголовок должен быть:
+            1. Продающим и привлекательным
+            2. Включать основные ключевые слова
+            3. Длиной 5-10 слов
+            4. Без HTML тегов
+            """
+
+            title = await self.openai.generate_text(title_prompt)
+
+            # Генерация ключевых слов
+            keywords_prompt = f"""
+            Извлеки 10 ключевых слов из заголовка для маркетплейса:
+            Заголовок: {title}
+
+            Ключевые слова должны быть:
+            1. Релевантными товару
+            2. Популярными для поиска
+            3. Без стоп-слов
+            4. В именительном падеже
+            """
+
+            keywords_text = await self.openai.generate_text(keywords_prompt)
+            keywords = [kw.strip() for kw in keywords_text.split(',') if kw.strip()]
+
+            return {
+                'title': title.strip(),
+                'keywords': keywords[:10],
+                'description': ''
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error in simple generation: {e}")
+            return {
+                'title': f"Товар {category_name} для {purpose}",
+                'keywords': [category_name, purpose],
+                'description': ''
+            }
+
     async def generate_description_workflow(self, title: str, keywords: List[str],
                                             description_type: str, category: str,
                                             category_data: Dict = None) -> str:

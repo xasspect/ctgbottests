@@ -1,5 +1,9 @@
+
 import asyncio
 import logging
+import os
+import json
+from pathlib import Path
 from aiogram.filters import Command
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
@@ -15,27 +19,38 @@ class GenerationHandler(BaseMessageHandler):
         super().__init__(config, services, repositories)
         self.router = Router()
         self.logger = logging.getLogger(__name__)
+        # Путь для сохранения файлов
+        self.downloads_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            'utils',
+            'downloads',
+            'mpstats'
+        )
+        os.makedirs(self.downloads_dir, exist_ok=True)
+
+        # Путь для сохранения JSON файлов с ключевыми словами
+        self.keywords_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            'utils',
+            'keywords'
+        )
+        os.makedirs(self.keywords_dir, exist_ok=True)
 
     async def register(self, dp):
         dp.include_router(self.router)
-        # Убрана регистрация handle_additional_params - это в CategoryHandler
         self.router.callback_query.register(self.handle_generate_title, F.data == "generate_title")
         self.router.callback_query.register(self.handle_regenerate_title, F.data == "regenerate_title")
         self.router.callback_query.register(self.handle_approve_title, F.data.startswith("approve_title_"))
-        # Добавляем обработчики для генерации описаний
         self.router.callback_query.register(self.handle_generate_short_desc, F.data.startswith("generate_short_"))
         self.router.callback_query.register(self.handle_generate_long_desc, F.data.startswith("generate_long_"))
         self.router.callback_query.register(self.handle_generate_both_desc, F.data.startswith("generate_both_"))
         self.router.message.register(self.show_generate_options, Command(commands=["generate"]))
+        self.router.callback_query.register(self.handle_collect_data, F.data == "collect_data")
 
     async def show_generate_options(self, message: Message):
-        """Показать опции генерации и запустить скрапер"""
+        """Показать опции генерации в зависимости от выбранного режима"""
         user_id = message.from_user.id
         self.logger.info(f"=== ВЫЗВАН /generate для пользователя {user_id} ===")
-        self.logger.info(f"Текст сообщения: '{message.text}'")
-
-        self.logger.info(f"Репозитории доступны: {list(self.repositories.keys())}")
-        self.logger.info(f"Сервисы доступны: {list(self.services.keys())}")
 
         # Проверяем наличие репозитория
         if 'session_repo' not in self.repositories:
@@ -44,125 +59,213 @@ class GenerationHandler(BaseMessageHandler):
             return
 
         session_repo = self.repositories['session_repo']
-        self.logger.info(f"session_repo тип: {type(session_repo)}")
+        session = session_repo.get_active_session(user_id)
 
-        try:
-            # Получаем сессию с отладочной информацией
-            self.logger.info(f"Запрашиваем активную сессию для user_id={user_id}")
-            session = session_repo.get_active_session(user_id)
-
-            # Логируем полученную сессию
-            if session:
-                self.logger.info(f"✅ Сессия получена: ID={session.id}")
-                self.logger.info(f"  Категория: {getattr(session, 'category_id', 'N/A')}")
-                self.logger.info(f"  Назначение: {getattr(session, 'purpose', 'N/A')}")
-                self.logger.info(f"  Текущий шаг: {getattr(session, 'current_step', 'N/A')}")
-                self.logger.info(f"  Доп. параметры: {getattr(session, 'additional_params', 'N/A')}")
-                self.logger.info(f"  Активна: {getattr(session, 'is_active', 'N/A')}")
-            else:
-                self.logger.warning("❌ Сессия не найдена или не активна")
-        except Exception as e:
-            print(e)
-
-            # [Остальной код остается без изменений...]
-
-        # Проверяем, есть ли сессия
-        # Проверяем, есть ли сессия
         if not session:
             await message.answer(
                 "⚠️ Сначала завершите настройку товара:\n"
                 "1. <code>/categories</code> - выбрать категорию и назначение\n"
-                "2. Укажите дополнительные параметры (опционально)\n"
-                "3. Затем используйте <code>/generate</code>"
+                "2. Укажите дополнительные параметры\n"
+                "3. Выберите способ генерации\n"
+                "4. Затем используйте <code>/generate</code>"
             )
             return
 
-        # ВРЕМЕННО: пропускаем проверку current_step для тестирования
-        # if session.current_step != "params_added":
-        #     await message.answer(
-        #         f"⚠️ Текущий шаг: {session.current_step}. Сначала завершите настройку:\n"
-        #         "1. <code>/categories</code> - выбрать категорию и назначение\n"
-        #         "2. Укажите дополнительные параметры (опционально)\n"
-        #         "3. Затем используйте <code>/generate</code>"
-        #     )
-        #     return
+        # Проверяем выбран ли способ генерации
+        if not hasattr(session, 'generation_mode') or session.generation_mode not in ['simple', 'advanced']:
+            await message.answer(
+                "⚠️ Сначала выберите способ генерации!\n\n"
+                "Завершите настройку параметров и выберите способ генерации."
+            )
+            return
 
-        # Вместо этого просто логируем шаг
-        self.logger.info(f"Шаг сессии: {session.current_step}, продолжаем...")
+        # Получаем название категории
+        category_name = self._get_category_display_name(session.category_id)
+        generation_mode = session.generation_mode
 
-        # Получаем название категории из наших данных
+        if generation_mode == 'advanced':
+            # Продвинутая генерация - создаем тестовые данные
+            await message.answer(f"🔍 <b>Создаю тестовые данные для категории:</b> {category_name}")
+
+            try:
+                # Создаем тестовые данные
+                test_file_path = await self._create_test_data({
+                    'category': session.category_id,
+                    'purpose': session.purpose,
+                    'additional_params': session.additional_params if session.additional_params else [],
+                    'user_id': user_id,
+                    'session_id': session.id
+                })
+
+                if test_file_path and os.path.exists(test_file_path):
+                    # Обновляем шаг сессии
+                    session.current_step = "data_scraped"
+                    session_repo.update(
+                        session.id,
+                        current_step="data_scraped"
+                    )
+
+                    # Загружаем ключевые слова для отображения
+                    keywords = await self._load_keywords_from_json(test_file_path)
+                    keywords_preview = ', '.join(keywords[:5]) + '...' if keywords else 'нет данных'
+
+                    # Показываем результат и кнопку генерации
+                    builder = InlineKeyboardBuilder()
+                    builder.button(text="🤖 Сгенерировать заголовок", callback_data="generate_title")
+
+                    await message.answer(
+                        f"✅ <b>Тестовые данные успешно созданы!</b>\n\n"
+                        f"📊 <b>Режим:</b> 🤖 Продвинутая генерация\n"
+                        f"🔑 <b>Ключевые слова:</b> {len(keywords)} шт.\n"
+                        f"<i>Примеры: {keywords_preview}</i>\n\n"
+                        "Нажмите кнопку ниже чтобы начать генерацию контента:",
+                        reply_markup=builder.as_markup()
+                    )
+                else:
+                    await message.answer(
+                        "❌ <b>Не удалось создать тестовые данные</b>\n\n"
+                        "Переключаюсь на простую генерацию..."
+                    )
+                    # Переключаемся на простую генерацию
+                    session.generation_mode = 'simple'
+                    session_repo.update(session.id, generation_mode='simple')
+                    await self._show_simple_generation_ui(message, session)
+
+            except Exception as e:
+                self.logger.error(f"❌ Ошибка при создании тестовых данных: {e}", exc_info=True)
+                await message.answer(
+                    f"❌ <b>Ошибка при создании тестовых данных:</b>\n{str(e)[:200]}\n\n"
+                    "Переключаюсь на простую генерацию..."
+                )
+                # Переключаемся на простую генерацию
+                session.generation_mode = 'simple'
+                session_repo.update(session.id, generation_mode='simple')
+                await self._show_simple_generation_ui(message, session)
+
+        else:
+            # Простая генерация - НЕ создаем тестовые данные, сразу переходим к генерации
+            await message.answer(f"🚀 <b>Начинаю простую генерацию для категории:</b> {category_name}")
+
+            # Сразу вызываем генерацию заголовка
+            await self._generate_title_simple(session)
+
+    async def _show_simple_generation_ui(self, message: Message, session):
+        """Показать интерфейс для простой генерации"""
+        # Получаем название категории
         category_name = self._get_category_display_name(session.category_id)
 
-        # Проверяем наличие скрапера
-        if 'scraper' not in self.services:
-            self.logger.error("❌ Скрапер сервис не найден в services!")
-            await message.answer("❌ Ошибка: скрапер сервис не инициализирован")
-            return
+        # Показываем информацию и кнопку генерации
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🚀 Сгенерировать заголовок", callback_data="generate_title")
 
-        scraper_service = self.services['scraper']
+        await message.answer(
+            f"🚀 <b>Простая генерация контента</b>\n\n"
+            f"📊 <b>Параметры:</b>\n"
+            f"• <b>Категория:</b> {category_name}\n"
+            f"• <b>Назначение:</b> {session.purpose}\n"
+            f"• <b>Доп. параметры:</b> {', '.join(session.additional_params) if session.additional_params else 'нет'}\n\n"
+            "Нажмите кнопку ниже чтобы сгенерировать контент на основе OpenAI:",
+            reply_markup=builder.as_markup()
+        )
 
-        # Запускаем скрапер для сбора данных
-        await message.answer(f"🔍 <b>Начинаю сбор данных с MPStats для категории:</b> {category_name}")
+    # app/bot/handlers/generation_handler.py
+    # Обновляем метод для работы без сохранения пути
 
+    async def _create_test_data(self, scraper_params):
+        """
+        Создает тестовые данные используя data_gen_service и keywords_processor
+
+        Args:
+            scraper_params: Параметры для создания данных
+
+        Returns:
+            Путь к созданному JSON файлу или None
+        """
         try:
-            # Подготавливаем параметры для скрапера
-            scraper_params = {
-                'category': session.category_id,
-                'purpose': session.purpose,
-                'additional_params': session.additional_params if hasattr(session, 'additional_params') else [],
-                'user_id': user_id,
-                'session_id': session.id
-            }
+            # 1. Используем data_gen_service для создания тестового XLSX файла
+            category = scraper_params.get('category', 'unknown')
+            self.logger.info(f"Создание тестового XLSX файла для категории: {category}")
 
-            self.logger.info(f"Запускаем скрапер с параметрами: {scraper_params}")
+            if 'data_gen' not in self.services:
+                self.logger.error("❌ data_gen service не найден в services!")
+                return None
 
-            # Запускаем скрапер
-            downloaded_file = await scraper_service.scrape_categories(scraper_params)
+            data_gen_service = self.services['data_gen']
+            xlsx_file_path = data_gen_service.create_test_xlsx_file(category)
 
-            if downloaded_file:
-                # Сохраняем путь к файлу в сессии
-                session.scraped_file = downloaded_file
-                session.current_step = "data_scraped"
-                session_repo.update(
-                    session.id,
-                    scraped_file=downloaded_file,
-                    current_step="data_scraped"
-                )
+            if not xlsx_file_path or not os.path.exists(xlsx_file_path):
+                self.logger.error(f"Не удалось создать XLSX файл: {xlsx_file_path}")
+                return None
 
-                await message.answer(
-                    f"✅ <b>Данные успешно собраны!</b>\n\n"
-                    f"📁 Файл сохранен: <code>{downloaded_file}</code>\n\n"
-                    "Теперь можно сгенерировать контент на основе собранных данных."
-                )
+            self.logger.info(f"Тестовый XLSX файл создан: {xlsx_file_path}")
 
-                # Показываем кнопку для генерации контента
-                builder = InlineKeyboardBuilder()
-                builder.button(text="🎯 Сгенерировать заголовок", callback_data="generate_title")
+            # 2. Создаем JSON файл с помощью keywords_processor
+            if 'keywords_processor' not in self.services:
+                self.logger.error("❌ keywords_processor service не найден в services!")
+                return None
 
-                await message.answer(
-                    "📊 <b>Параметры генерации:</b>\n\n"
-                    f"• <b>Категория:</b> {category_name}\n"
-                    f"• <b>Назначение:</b> {session.purpose}\n"
-                    f"• <b>Доп. параметры:</b> {', '.join(session.additional_params) if hasattr(session, 'additional_params') and session.additional_params else 'нет'}\n"
-                    f"• <b>Собранные данные:</b> ✅\n\n"
-                    "Нажмите кнопку ниже чтобы начать генерацию контента:",
-                    reply_markup=builder.as_markup()
-                )
-            else:
-                await message.answer(
-                    "❌ <b>Не удалось собрать данные с MPStats</b>\n\n"
-                    "Попробуйте:\n"
-                    "1. Проверить логин/пароль MPStats в настройках\n"
-                    "2. Подождать и попробовать снова\n"
-                    "3. Использовать заглушечные данные для тестирования"
-                )
+            processor = self.services['keywords_processor']
+
+            # Создаем обогащенный JSON
+            json_file_path = processor.create_enriched_json(
+                excel_path=xlsx_file_path,
+                category=scraper_params.get('category', 'unknown'),
+                purpose=scraper_params.get('purpose', 'unknown'),
+                additional_params=scraper_params.get('additional_params', [])
+            )
+
+            # 3. Удаляем временный XLSX файл
+            try:
+                if os.path.exists(xlsx_file_path):
+                    os.remove(xlsx_file_path)
+                    self.logger.info(f"Временный XLSX файл удален: {xlsx_file_path}")
+            except Exception as e:
+                self.logger.warning(f"Не удалось удалить временный XLSX файл: {e}")
+
+            return json_file_path
 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка при сборе данных: {e}", exc_info=True)
-            await message.answer(
-                f"❌ <b>Ошибка при сборе данных:</b>\n{str(e)[:200]}\n\n"
-                "Попробуйте еще раз или обратитесь к администратору."
+            self.logger.error(f"Ошибка в _create_test_data: {e}", exc_info=True)
+            return None
+
+    async def _process_xlsx_to_json(self, xlsx_file_path, scraper_params):
+        """
+        Обрабатывает XLSX файл через keywords_processor для создания JSON
+
+        Args:
+            xlsx_file_path: Путь к XLSX файлу
+            scraper_params: Параметры для включения в JSON
+
+        Returns:
+            Путь к созданному JSON файлу
+        """
+        try:
+            # Проверяем наличие keywords_processor
+            if 'keywords_processor' not in self.services:
+                self.logger.error("❌ keywords_processor service не найден в services!")
+                return None
+
+            processor = self.services['keywords_processor']
+
+            # Создаем обогащенный JSON
+            enriched_json_path = processor.create_enriched_json(
+                excel_path=xlsx_file_path,
+                category=scraper_params.get('category', 'unknown'),
+                purpose=scraper_params.get('purpose', 'unknown'),
+                additional_params=scraper_params.get('additional_params', [])
             )
+
+            if not enriched_json_path or not os.path.exists(enriched_json_path):
+                self.logger.error(f"Не удалось создать обогащенный JSON файл")
+                return None
+
+            self.logger.info(f"Обогащенный JSON файл создан: {enriched_json_path}")
+
+            return enriched_json_path
+
+        except Exception as e:
+            self.logger.error(f"Ошибка в _process_xlsx_to_json: {e}", exc_info=True)
+            return None
 
     def _get_category_display_name(self, category_id: str) -> str:
         """Получить отображаемое название категории"""
@@ -174,13 +277,51 @@ class GenerationHandler(BaseMessageHandler):
         }
         return categories_data.get(category_id, "Неизвестная категория")
 
-    # Остальные методы оставляем без изменений, но добавляем проверки на существование репозиториев
+    # app/bot/handlers/generation_handler.py
+    async def _load_keywords_from_json(self, json_file_path):
+        """
+        Загружает ключевые слова из JSON файла
+
+        Args:
+            json_file_path: Путь к JSON файлу
+
+        Returns:
+            Список ключевых слов
+        """
+        try:
+            if not os.path.exists(json_file_path):
+                self.logger.error(f"JSON файл не найден: {json_file_path}")
+                return []
+
+            # Проверяем наличие keywords_processor
+            if 'keywords_processor' in self.services:
+                processor = self.services['keywords_processor']
+                return processor.load_keywords_from_json(json_file_path)
+
+            # Альтернативный способ загрузки
+            import json
+            with open(json_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Пытаемся получить ключевые слова из разных форматов
+            if 'keywords' in data:
+                return data['keywords']
+            elif 'words' in data:
+                return data['words']
+            else:
+                self.logger.warning(f"Ключевые слова не найдены в JSON: {json_file_path}")
+                return []
+
+        except Exception as e:
+            self.logger.error(f"Ошибка загрузки ключевых слов: {e}")
+            return []
+
+    # Обновляем метод handle_generate_title для использования ключевых слов из JSON
     async def handle_generate_title(self, callback: CallbackQuery):
-        """Генерация заголовка с реальными сервисами"""
+        """Генерация заголовка в зависимости от выбранного режима"""
         user_id = callback.from_user.id
 
-        # Проверяем наличие репозиториев
-        if 'session_repo' not in self.repositories or 'category_repo' not in self.repositories:
+        if 'session_repo' not in self.repositories:
             await callback.answer("❌ Репозитории не инициализированы")
             return
 
@@ -191,9 +332,232 @@ class GenerationHandler(BaseMessageHandler):
             await callback.answer("❌ Сессия не найдена")
             return
 
-        await callback.message.edit_text("🔍 <b>Получаю ключевые слова из MPStats...</b>")
+        # Определяем способ генерации
+        generation_mode = session.generation_mode
+
+        if generation_mode == 'advanced':
+            # Продвинутая генерация
+            await self._generate_title_advanced(callback, session)
+        else:
+            # Простая генерация
+            await self._generate_title_simple(callback, session)
+
+    # Добавьте новый метод для сбора данных:
+    async def handle_collect_data(self, callback: CallbackQuery):
+        """Сбор данных для продвинутой генерации"""
+        user_id = callback.from_user.id
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_active_session(user_id)
+
+        if not session or session.generation_mode != 'advanced':
+            await callback.answer("❌ Некорректный режим генерации")
+            return
+
+        await callback.message.edit_text("🔍 <b>Собираю данные с MPStats...</b>")
 
         try:
+            # Создаем тестовые данные
+            test_file_path = await self._create_test_data({
+                'category': session.category_id,
+                'purpose': session.purpose,
+                'additional_params': session.additional_params if session.additional_params else [],
+                'user_id': user_id,
+                'session_id': session.id
+            })
+
+            if test_file_path and os.path.exists(test_file_path):
+                # Обновляем шаг сессии
+                session.current_step = "data_scraped"
+                session_repo.update(session.id, current_step="data_scraped")
+
+                # Показываем кнопку для генерации
+                builder = InlineKeyboardBuilder()
+                builder.button(text="🤖 Сгенерировать заголовок", callback_data="generate_title")
+
+                await callback.message.edit_text(
+                    "✅ <b>Данные успешно собраны!</b>\n\n"
+                    "Теперь можно сгенерировать заголовок:",
+                    reply_markup=builder.as_markup()
+                )
+            else:
+                await callback.message.edit_text("❌ Не удалось собрать данные")
+
+        except Exception as e:
+            self.logger.error(f"Ошибка сбора данных: {e}")
+            await callback.message.edit_text("❌ Ошибка при сборе данных")
+
+    async def _generate_title_simple(self, callback: CallbackQuery, session):
+        """Простая генерация заголовка через OpenAI"""
+        user_id = callback.from_user.id
+
+        await callback.message.edit_text("🚀 <b>Генерирую заголовок (простой режим)...</b>")
+
+        try:
+            # Получаем данные категории
+            category_repo = self.repositories['category_repo']
+            category = category_repo.get_by_id(session.category_id)
+
+            if not category:
+                await callback.message.edit_text("❌ Категория не найдена")
+                return
+
+            # Используем OpenAI сервис напрямую
+            if 'openai' not in self.services:
+                await callback.message.edit_text("❌ Сервис OpenAI не инициализирован")
+                return
+
+            openai_service = self.services['openai']
+
+            # Формируем промпт для генерации заголовка
+            prompt = self._build_simple_title_prompt(session, category)
+
+            # Генерируем заголовок
+            generated_title = await openai_service.generate_title(
+                category=category.name,
+                purpose=session.purpose,
+                keywords=[],  # Для простой генерации не используем ключевые слова
+                additional_params=session.additional_params if session.additional_params else [],
+                system_prompt=getattr(category, 'system_prompt_title', '')
+            )
+
+            if not generated_title:
+                await callback.message.edit_text("❌ Не удалось сгенерировать заголовок")
+                return
+
+            # Генерируем ключевые слова на основе заголовка
+            keywords_prompt = self._build_keywords_prompt(generated_title, category.name)
+
+            # Для простой генерации используем заголовок для извлечения ключевых слов
+            if hasattr(openai_service, 'generate_text'):
+                keywords_text = await openai_service.generate_text(
+                    prompt=keywords_prompt,
+                    max_tokens=100
+                )
+                keywords = self._parse_keywords(keywords_text)
+            else:
+                # Альтернативный способ - использовать базовые ключевые слова
+                keywords = [category.name, session.purpose]
+
+            # Сохраняем результаты в сессии (используем репозиторий из self.repositories)
+            session_repo = self.repositories['session_repo']
+            session.generated_title = generated_title
+            session.keywords = keywords
+            session.current_step = "title_generated"
+
+            # Используем метод update из BaseRepository через репозиторий сессий
+            session_repo.update(
+                session.id,
+                generated_title=generated_title,
+                keywords=keywords,
+                current_step="title_generated"
+            )
+
+            # Показываем заголовок с кнопками
+            builder = InlineKeyboardBuilder()
+            builder.button(text="✅ Принять", callback_data=f"approve_title_{session.id}")
+            builder.button(text="🔄 Перегенерировать", callback_data="regenerate_title")
+            builder.button(text="📝 Изменить параметры", callback_data="change_params")
+            builder.adjust(1)
+
+            await callback.message.edit_text(
+                f"📝 <b>Предлагаю заголовок (простая генерация):</b>\n\n"
+                f"<code>{generated_title}</code>\n\n"
+                f"🔑 <b>Ключевые слова:</b> {', '.join(keywords[:8]) if keywords else 'не сгенерированы'}",
+                reply_markup=builder.as_markup()
+            )
+
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка простой генерации: {e}", exc_info=True)
+            await callback.message.edit_text(
+                f"❌ <b>Ошибка генерации:</b> {str(e)[:200]}\n\n"
+                "Попробуйте изменить параметры или начать заново с /reset"
+            )
+
+        await callback.answer()
+
+
+    def _build_simple_title_prompt(self, session, category) -> str:
+        """Создать промпт для простой генерации заголовка"""
+        return f"""
+        Создай продающий заголовок для товара на маркетплейсе со следующими параметрами:
+
+        Категория: {category.name}
+        Назначение товара: {session.purpose}
+        Дополнительные параметры: {', '.join(session.additional_params) if session.additional_params else 'нет'}
+
+        Требования к заголовку:
+        1. Максимально продающий и привлекательный
+        2. Включает основные преимущества товара
+        3. Соответствует категории "{category.name}"
+        4. Оптимизирован для поиска на маркетплейсе
+        5. Длина 5-7 слов
+        6. Не используй HTML теги
+        7. Пиши на русском языке
+        8. Не используй специальные символы
+        """
+
+    def _build_keywords_prompt(self, title: str, category_name: str) -> str:
+        """Создать промпт для генерации ключевых слов"""
+        return f"""
+        Извлеки 8-12 ключевых слов из этого заголовка для маркетплейса:
+
+        Заголовок: {title}
+        Категория: {category_name}
+
+        Требования к ключевым словам:
+        1. Релевантные товару
+        2. Популярные для поиска на маркетплейсах
+        3. Без стоп-слов
+        4. В именительном падеже
+        5. Разделяй запятыми
+
+        Верни только список ключевых слов через запятую.
+        """
+
+    def _parse_keywords(self, text: str) -> list:
+        """Парсить ключевые слова из текста"""
+        if not text:
+            return []
+
+        # Удаляем лишние символы и разбиваем
+        keywords = []
+        for word in text.replace('\n', ',').split(','):
+            word = word.strip().strip('.').strip()
+            if word and len(word) > 1 and word.lower() not in ['и', 'в', 'на', 'для', 'с']:
+                keywords.append(word)
+
+        return keywords[:12]  # Ограничиваем количество
+
+    async def _generate_title_advanced(self, callback: CallbackQuery, session):
+        """Продвинутая генерация заголовка с MPStats"""
+        user_id = callback.from_user.id
+
+        await callback.message.edit_text("🤖 <b>Загружаю ключевые слова...</b>")
+
+        try:
+            # В продвинутой генерации мы создаем данные на лету
+            scraper_params = {
+                'category': session.category_id,
+                'purpose': session.purpose,
+                'additional_params': session.additional_params if session.additional_params else [],
+                'user_id': user_id,
+                'session_id': session.id
+            }
+
+            # Создаем тестовые данные
+            test_file_path = await self._create_test_data(scraper_params)
+
+            if not test_file_path or not os.path.exists(test_file_path):
+                await callback.message.edit_text("❌ Не удалось загрузить ключевые слова")
+                return
+
+            keywords = await self._load_keywords_from_json(test_file_path)
+
+            if not keywords:
+                await callback.message.edit_text("❌ Не удалось загрузить ключевые слова")
+                return
+
             # Получаем данные категории
             category_repo = self.repositories['category_repo']
             category = category_repo.get_by_id(session.category_id)
@@ -214,17 +578,20 @@ class GenerationHandler(BaseMessageHandler):
                 'system_prompt_title': getattr(category, 'system_prompt_title', '')
             }
 
+            # Используем загруженные ключевые слова
             result = await content_service.generate_content_workflow(
                 category_name=category.name,
                 purpose=session.purpose,
-                additional_params=session.additional_params if hasattr(session, 'additional_params') else [],
-                category_data=category_data
+                additional_params=session.additional_params if session.additional_params else [],
+                category_data=category_data,
+                keywords=keywords
             )
 
             # Сохраняем результаты в сессии
             session.generated_title = result['title']
             session.keywords = result['keywords']
             session.current_step = "title_generated"
+            session_repo = self.repositories['session_repo']
             session_repo.update(
                 session.id,
                 generated_title=result['title'],
@@ -236,24 +603,27 @@ class GenerationHandler(BaseMessageHandler):
             builder = InlineKeyboardBuilder()
             builder.button(text="✅ Принять", callback_data=f"approve_title_{session.id}")
             builder.button(text="🔄 Перегенерировать", callback_data="regenerate_title")
+            builder.button(text="📝 Изменить параметры", callback_data="change_params")  # Новая кнопка
             builder.adjust(1)
 
             await callback.message.edit_text(
-                f"📝 <b>Предлагаю заголовок:</b>\n\n"
+                f"📝 <b>Предлагаю заголовок (продвинутая генерация):</b>\n\n"
                 f"<code>{result['title']}</code>\n\n"
                 f"🔑 <b>Ключевые слова:</b> {', '.join(result['keywords'][:8])}...",
                 reply_markup=builder.as_markup()
             )
 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка генерации: {e}", exc_info=True)
+            self.logger.error(f"❌ Ошибка продвинутой генерации: {e}", exc_info=True)
             await callback.message.edit_text(
-                f"❌ <b>Ошибка генерации:</b> {str(e)}\n\n"
+                f"❌ <b>Ошибка генерации:</b> {str(e)[:200]}\n\n"
                 "Попробуйте изменить параметры или начать заново с /reset"
             )
 
         await callback.answer()
 
+
+    # Остальные методы остаются без изменений...
     async def handle_generate_short_desc(self, callback: CallbackQuery):
         """Генерация краткого описания"""
         await self._generate_description(callback, "short")

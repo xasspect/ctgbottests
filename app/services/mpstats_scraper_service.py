@@ -4,6 +4,7 @@ import logging
 import random
 import time
 import re
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 from selenium import webdriver
@@ -26,8 +27,9 @@ class MPStatsScraperService:
     def __init__(self, config):
         self.config = config
         self.driver_manager = ChromeDriverManager
-        self.driver = None
         self.download_dir = Path("downloads/mpstats")
+        self.logger = logger
+
 
     async def initialize_scraper(self):
         """Инициализация скрапера"""
@@ -127,6 +129,22 @@ class MPStatsScraperService:
             }
 
         return {"valid": True, "status": "success"}
+
+    # app/services/mpstats_scraper_service.py
+    # Добавляем в класс MPStatsScraperService:
+
+    def cleanup_downloads(self):
+        """Очистка временных файлов"""
+        try:
+            if hasattr(self, 'downloads_dir') and os.path.exists(self.downloads_dir):
+                # Удаляем временные файлы
+                for file in os.listdir(self.downloads_dir):
+                    if file.endswith('.xlsx') or file.endswith('.json'):
+                        os.remove(os.path.join(self.downloads_dir, file))
+                        self.logger.info(f"Удален временный файл: {file}")
+            self.logger.info("✅ Временные файлы очищены")
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка очистки временных файлов: {e}")
 
     async def _setup_driver(self) -> webdriver.Chrome:
         """Настройка Chrome драйвера с stealth режимом"""

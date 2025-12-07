@@ -1,5 +1,7 @@
 from typing import List, Optional, TypeVar, Generic, Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.sync import update
+
 from app.database.database import database
 import logging
 

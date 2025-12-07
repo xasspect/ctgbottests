@@ -8,14 +8,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class ExcelToJsonConverter:
+class KeywordsProcessor:
     """
-    Конвертер Excel файлов в JSON формат
+    Процессор для работы с ключевыми словами
     """
 
     def __init__(self, preserve_excel: bool = False, target_column: str = "Кластер WB"):
         """
-        Инициализация конвертера
+        Инициализация процессора
 
         Args:
             preserve_excel: Сохранять ли исходный Excel файл после конвертации
@@ -24,46 +24,55 @@ class ExcelToJsonConverter:
         self.logger = logger
         self.preserve_excel = preserve_excel
         self.target_column = target_column
-        self.logger.info(
-            f"Инициализирован конвертер ExcelToJsonConverter (preserve_excel={preserve_excel}, target_column={target_column})")
 
-    def extract_words_from_sheet(self, df: pd.DataFrame, sheet_name: str) -> List[str]:
+        # Путь для сохранения keywords JSON файлов
+        self.keywords_dir = os.path.join(
+            os.path.dirname(__file__),  # app/utils
+            'keywords'
+        )
+        os.makedirs(self.keywords_dir, exist_ok=True)
+
+        self.logger.info(
+            f"Инициализирован процессор KeywordsProcessor (preserve_excel={preserve_excel}, target_column={target_column}, keywords_dir={self.keywords_dir})")
+
+    def extract_keywords_from_sheet(self, df: pd.DataFrame, sheet_name: str) -> List[str]:
         """
-        Извлекает уникальные слова из целевого столбца
+        Извлекает уникальные ключевые слова из целевого столбца
 
         Args:
             df: DataFrame с данными
             sheet_name: Имя листа
 
         Returns:
-            Список уникальных слов
+            Список уникальных ключевых слов
         """
-        words = []
+        keywords = []
 
         try:
             # Проверяем наличие целевого столбца
             if self.target_column not in df.columns:
                 self.logger.warning(
                     f"Столбец '{self.target_column}' не найден в листе '{sheet_name}'. Доступные столбцы: {list(df.columns)}")
-                return words
+                return keywords
+
 
             # Извлекаем значения из столбца
             column_values = df[self.target_column].dropna().astype(str).str.strip()
 
             # Удаляем дубликаты и пустые строки
-            unique_words = list(set([word for word in column_values if word]))
+            unique_keywords = list(set([word for word in column_values if word]))
 
-            self.logger.info(f"Из листа '{sheet_name}' извлечено {len(unique_words)} уникальных слов")
+            self.logger.info(f"Из листа '{sheet_name}' извлечено {len(unique_keywords)} уникальных ключевых слов")
 
-            return unique_words
+            return unique_keywords
 
         except Exception as e:
-            self.logger.error(f"Ошибка при извлечении слов из листа '{sheet_name}': {str(e)}")
-            return words
+            self.logger.error(f"Ошибка при извлечении ключевых слов из листа '{sheet_name}': {str(e)}")
+            return keywords
 
-    def convert_file(self, excel_path: str, json_path: Optional[str] = None) -> str:
+    def convert_xlsx_to_json(self, excel_path: str, json_path: Optional[str] = None) -> str:
         """
-        Конвертирует Excel файл в JSON, извлекая только значения из целевого столбца
+        Конвертирует Excel файл в JSON с ключевыми словами
 
         Args:
             excel_path: Путь к исходному Excel файлу
@@ -71,12 +80,8 @@ class ExcelToJsonConverter:
 
         Returns:
             Путь к созданному JSON файлу
-
-        Raises:
-            FileNotFoundError: Если исходный файл не найден
-            ValueError: Если произошла ошибка конвертации
         """
-        self.logger.info(f"Начало конвертации файла: {excel_path}")
+        self.logger.info(f"Конвертация файла: {excel_path}")
         self.logger.info(f"Целевой столбец для извлечения: '{self.target_column}'")
 
         try:
@@ -90,6 +95,13 @@ class ExcelToJsonConverter:
 
             # Загрузка Excel файла
             self.logger.info(f"Загрузка Excel файла: {excel_path}")
+            if json_path is None:
+                base_name = Path(excel_path).stem
+                # Сохраняем в папке keywords, а не в той же папке
+                json_path = os.path.join(self.keywords_dir, f"{base_name}.json")
+                self.logger.debug(f"Путь JSON не указан, сгенерирован: {json_path}")
+            self.logger.info(f"Сохранение JSON в файл: {json_path}")
+
 
             try:
                 excel_data = pd.read_excel(excel_path, sheet_name=None)
@@ -103,27 +115,27 @@ class ExcelToJsonConverter:
                 self.logger.exception("Подробности ошибки:")
                 raise ValueError(error_msg) from e
 
-            # Извлечение слов из всех листов
-            self.logger.info(f"Извлечение слов из столбца '{self.target_column}'...")
-            all_words = []
+            # Извлечение ключевых слов из всех листов
+            self.logger.info(f"Извлечение ключевых слов из столбца '{self.target_column}'...")
+            all_keywords = []
 
             for sheet_name, df in excel_data.items():
                 self.logger.debug(f"Обработка листа: {sheet_name}")
                 self.logger.debug(f"Размер листа {sheet_name}: {df.shape[0]} строк, {df.shape[1]} столбцов")
 
-                sheet_words = self.extract_words_from_sheet(df, sheet_name)
-                all_words.extend(sheet_words)
+                sheet_keywords = self.extract_keywords_from_sheet(df, sheet_name)
+                all_keywords.extend(sheet_keywords)
 
             # Удаляем дубликаты на уровне всего файла
-            unique_words = list(set(all_words))
-            self.logger.info(f"Всего извлечено {len(all_words)} слов, уникальных: {len(unique_words)}")
+            unique_keywords = list(set(all_keywords))
+            self.logger.info(f"Всего извлечено {len(all_keywords)} ключевых слов, уникальных: {len(unique_keywords)}")
 
             # Сортировка для удобства (опционально)
-            unique_words.sort()
+            unique_keywords.sort()
 
-            # Подготовка JSON данных
+            # Подготовка JSON данных (базовый формат)
             json_data = {
-                "words": unique_words,
+                "keywords": unique_keywords,
             }
 
             # Определение пути для JSON файла
@@ -165,7 +177,7 @@ class ExcelToJsonConverter:
 
             self.logger.info(
                 f"Конвертация завершена успешно. "
-                f"Уникальных слов извлечено: {len(unique_words)}, "
+                f"Уникальных ключевых слов извлечено: {len(unique_keywords)}, "
                 f"JSON файл: {json_path}"
             )
 
@@ -175,71 +187,118 @@ class ExcelToJsonConverter:
             self.logger.exception(f"Критическая ошибка при конвертации файла {excel_path}")
             raise
 
-    def convert_directory(self, directory_path: str, output_dir: Optional[str] = None,
-                          pattern: str = "*.xlsx", recursive: bool = False) -> Dict[str, str]:
+    def create_enriched_json(self, excel_path: str, category: str, purpose: str,
+                             additional_params: List[str], json_path: Optional[str] = None) -> str:
         """
-        Конвертирует все Excel файлы в директории
+        Создает обогащенный JSON файл с 4 колонками:
+        - category
+        - purpose 
+        - additional_params
+        - keywords
 
         Args:
-            directory_path: Путь к директории с Excel файлами
-            output_dir: Директория для сохранения JSON файлов
-            pattern: Шаблон поиска файлов (по умолчанию *.xlsx)
-            recursive: Рекурсивный поиск во вложенных директориях
+            excel_path: Путь к исходному Excel файлу
+            category: Категория товара
+            purpose: Назначение товара
+            additional_params: Дополнительные параметры
+            json_path: Путь для сохранения JSON файла
 
         Returns:
-            Словарь {исходный_файл: созданный_json_файл}
+            Путь к созданному JSON файлу
         """
-        self.logger.info(f"Конвертация Excel файлов в директории: {directory_path}")
-        self.logger.debug(f"Параметры: pattern={pattern}, recursive={recursive}, output_dir={output_dir}")
+        try:
+            self.logger.info(f"Создание обогащенного JSON из файла: {excel_path}")
+            self.logger.info(
+                f"Параметры: category={category}, purpose={purpose}, additional_params={additional_params}")
 
-        if not os.path.exists(directory_path):
-            error_msg = f"Директория не найдена: {directory_path}"
-            self.logger.error(error_msg)
-            raise FileNotFoundError(error_msg)
+            # Сначала конвертируем Excel в базовый JSON
+            base_json_path = self.convert_xlsx_to_json(excel_path)
 
-        if output_dir and not os.path.exists(output_dir):
-            self.logger.info(f"Создание выходной директории: {output_dir}")
-            os.makedirs(output_dir, exist_ok=True)
+            if not base_json_path:
+                raise ValueError("Не удалось создать базовый JSON файл")
 
-        results = {}
+            # Загружаем базовый JSON
+            with open(base_json_path, 'r', encoding='utf-8') as f:
+                base_data = json.load(f)
 
-        # Поиск файлов
-        import glob
-        search_pattern = os.path.join(directory_path, pattern)
+            # Получаем ключевые слова
+            keywords = base_data.get('words', [])
 
-        if recursive:
-            search_pattern = os.path.join(directory_path, "**", pattern)
+            # Создаем обогащенную структуру
+            enriched_data = {
+                'category': category,
+                'purpose': purpose,
+                'additional_params': additional_params,
+                'keywords': keywords
+            }
 
-        excel_files = glob.glob(search_pattern, recursive=recursive)
+            # Определение пути для обогащенного JSON файла
+            if json_path is None:
+                base_name = Path(excel_path).stem
+                safe_category = category.replace('/', '_').replace(' ', '_')
+                # Сохраняем в папке keywords
+                json_path = os.path.join(self.keywords_dir, f"{safe_category}_enriched.json")
+                self.logger.debug(f"Путь JSON не указан, сгенерирован: {json_path}")
 
-        self.logger.info(f"Найдено Excel файлов: {len(excel_files)}")
+            # Сохранение обогащенного JSON файла
+            self.logger.info(f"Сохранение обогащенного JSON в файл: {json_path}")
 
-        if not excel_files:
-            self.logger.warning("Excel файлы не найдены")
-            return results
+            with open(json_path, 'w', encoding='utf-8') as json_file:
+                json.dump(enriched_data, json_file, ensure_ascii=False, indent=2)
 
-        # Конвертация каждого файла
-        for i, excel_file in enumerate(excel_files, 1):
-            self.logger.info(f"Конвертация файла {i}/{len(excel_files)}: {excel_file}")
+            file_size = os.path.getsize(json_path)
+            self.logger.info(f"Обогащенный JSON файл сохранен. Размер: {file_size} байт")
 
+            # Удаляем базовый JSON файл
             try:
-                # Определение пути для JSON файла
-                if output_dir:
-                    base_name = Path(excel_file).stem
-                    json_file = os.path.join(output_dir, f"{base_name}.json")
-                else:
-                    json_file = None
-
-                # Конвертация
-                json_path = self.convert_file(excel_file, json_file)
-                results[excel_file] = json_path
-
+                if os.path.exists(base_json_path) and base_json_path != json_path:
+                    os.remove(base_json_path)
+                    self.logger.info(f"Базовый JSON файл удален: {base_json_path}")
             except Exception as e:
-                self.logger.error(f"Ошибка при конвертации файла {excel_file}: {str(e)}")
-                continue
+                self.logger.warning(f"Не удалось удалить базовый JSON файл: {str(e)}")
 
-        self.logger.info(f"Конвертация директории завершена. Успешно: {len(results)}/{len(excel_files)} файлов")
-        return results
+            self.logger.info(
+                f"Обогащенный JSON создан успешно. "
+                f"Ключевых слов: {len(keywords)}, "
+                f"Файл: {json_path}"
+            )
+
+            return json_path
+
+        except Exception as e:
+            self.logger.exception(f"Критическая ошибка при создании обогащенного JSON из файла {excel_path}")
+            raise
+
+    def load_keywords_from_json(self, json_file_path: str) -> List[str]:
+        """
+        Загружает ключевые слова из JSON файла
+
+        Args:
+            json_file_path: Путь к JSON файлу
+
+        Returns:
+            Список ключевых слов
+        """
+        try:
+            if not os.path.exists(json_file_path):
+                self.logger.error(f"JSON файл не найден: {json_file_path}")
+                return []
+
+            with open(json_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Пытаемся получить ключевые слова из разных форматов
+            if 'keywords' in data:
+                return data['keywords']
+            elif 'words' in data:
+                return data['words']
+            else:
+                self.logger.warning(f"Ключевые слова не найдены в JSON: {json_file_path}")
+                return []
+
+        except Exception as e:
+            self.logger.error(f"Ошибка загрузки ключевых слов: {str(e)}")
+            return []
 
 
 # Пример использования
@@ -250,12 +309,27 @@ if __name__ == "__main__":
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
-    # Создание конвертера
-    converter = ExcelToJsonConverter(preserve_excel=False, target_column="Кластер WB")
+    # Создание процессора
+    processor = KeywordsProcessor(preserve_excel=False, target_column="Кластер WB")
 
-    # Конвертация одного файла
+    # Пример конвертации одного файла
     try:
-        results = converter.convert_directory(directory_path='downloads/mpstats', output_dir="keywords")
-        print(f"Конвертировано файлов: {len(results)}")
+        # Укажите путь к тестовому XLSX файлу
+        test_xlsx = "downloads/mpstats/test.xlsx"
+        if os.path.exists(test_xlsx):
+            enriched_json = processor.create_enriched_json(
+                excel_path=test_xlsx,
+                category="electronics",
+                purpose="продажа",
+                additional_params=["новинка", "скидка"]
+            )
+            print(f"Обогащенный JSON создан: {enriched_json}")
+
+            # Загрузка ключевых слов для проверки
+            keywords = processor.load_keywords_from_json(enriched_json)
+            print(f"Загружено ключевых слов: {len(keywords)}")
+            print(f"Примеры: {keywords[:5]}")
+        else:
+            print(f"Тестовый файл не найден: {test_xlsx}")
     except Exception as e:
-        print(f"Ошибка конвертации директории: {e}")
+        print(f"Ошибка: {e}")
