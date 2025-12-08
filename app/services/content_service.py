@@ -121,7 +121,7 @@ class ContentService:
         )
 
         if not desc_valid:
-            self.logger.warning(f"⚠️ {description_type} описание не прошло валидацию")
+            self.logger.warning(f"❌ {description_type} описание не прошло валидацию")
             description = await self.openai.generate_description(
                 title, keywords, description_type, category, system_prompt_desc
             )

@@ -18,14 +18,14 @@ async def main():
     bot = ContentGeneratorBot(config)
 
     try:
-        logger.info("🚀 Starting MPStats Content Generator Bot")
+        logger.info("Starting MPStats Content Generator Bot")
         await bot.initialize()
         await bot.run()
 
     except KeyboardInterrupt:
-        logger.info("🛑 Bot stopped by user")
+        logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"❌ Bot error: {e}")
+        logger.error(f"Bot error: {e}")
         raise
     finally:
         await bot.shutdown()

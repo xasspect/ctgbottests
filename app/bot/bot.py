@@ -23,7 +23,7 @@ class ContentGeneratorBot:
 
     async def initialize(self):
         """Инициализация бота"""
-        self.logger.info("🚀 Initializing Telegram Bot (aiogram)...")
+        self.logger.info("Initializing Telegram Bot (aiogram)...")
 
         # Инициализация БД
         from app.database.database import database
@@ -146,7 +146,7 @@ class ContentGeneratorBot:
                 self.logger.error(f"❌ Handler is None!")
     async def run(self):
         """Запуск бота"""
-        self.logger.info("🤖 Starting bot polling...")
+        self.logger.info("✅ Starting bot polling...")
         try:
             await self.dp.start_polling(self.bot)
         except Exception as e:
@@ -155,7 +155,7 @@ class ContentGeneratorBot:
 
     async def shutdown(self):
         """Завершение работы"""
-        self.logger.info("👋 Shutting down bot...")
+        self.logger.info("Shutting down bot...")
 
         try:
             if self.bot:
@@ -175,4 +175,4 @@ class ContentGeneratorBot:
         except Exception as e:
             self.logger.error(f"❌ Error during shutdown: {e}")
 
-        self.logger.info("👋 Bot shutdown completed")
+        self.logger.info("Bot shutdown completed")
