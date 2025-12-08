@@ -47,6 +47,127 @@ class GenerationHandler(BaseMessageHandler):
         self.router.message.register(self.show_generate_options, Command(commands=["generate"]))
         self.router.callback_query.register(self.handle_collect_data, F.data == "collect_data")
 
+    async def _generate_title_simple_from_message(self, message: Message, session):
+        """Простая генерация заголовка из сообщения - только на основе параметров"""
+        user_id = message.from_user.id
+
+        await message.answer("🚀 <b>Генерирую заголовок (простой режим)...</b>")
+
+        try:
+            # Получаем данные категории
+            category_repo = self.repositories['category_repo']
+            category = category_repo.get_by_id(session.category_id)
+
+            if not category:
+                await message.answer("❌ Категория не найдена")
+                return
+
+            # Используем OpenAI сервис напрямую
+            if 'openai' not in self.services:
+                await message.answer("❌ Сервис OpenAI не инициализирован")
+                return
+
+            openai_service = self.services['openai']
+
+            # Формируем ПРОСТОЙ промпт для генерации заголовка - БЕЗ КЛЮЧЕВЫХ СЛОВ
+            user_prompt = f"""
+                Создай продающий заголовок для товара на маркетплейсе со следующими параметрами:
+        
+                Категория: {category.name}
+                Назначение товара: {session.purpose}
+                Дополнительные параметры: {', '.join(session.additional_params) if session.additional_params else 'нет'}
+        
+                Требования к заголовку:
+                1. Максимально продающий и привлекательный
+                2. Включает основные преимущества товара
+                3. Соответствует категории "{category.name}"
+                4. Оптимизирован для поиска на маркетплейсе
+                5. Длина от 5 до 10 слов
+                6. Не используй HTML теги
+                7. Пиши на русском языке
+                8. Не используй специальные символы "!, :, ^, )" и т.д.
+                9. Дополнительные параметры должны привлекательно встраиваться в заголовок. Например: не "Зимняя рубашка для Нового года", а "Новогодняя зимняя рубашка"
+                10. Ты создаешь заголовок в карточке товара на маркетплейсе
+                """
+
+            # Системный промпт (если есть у категории)
+            system_prompt = getattr(category, 'system_prompt_title', None)
+
+            if not system_prompt:
+                system_prompt = """
+                Ты профессиональный копирайтер для маркетплейсов.
+                Создавай продающие, естественные заголовки для товаров.
+                """
+
+            # Генерируем заголовок
+            generated_title = await openai_service.generate_text(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                max_tokens=150,
+                temperature=0.7
+            )
+
+            if not generated_title:
+                await message.answer("❌ Не удалось сгенерировать заголовок")
+                return
+
+            # Очищаем заголовок
+            generated_title = generated_title.strip().strip('"').strip("'").strip()
+
+            if generated_title.startswith("Заголовок:"):
+                generated_title = generated_title.replace("Заголовок:", "").strip()
+
+            # Сохраняем только заголовок, БЕЗ КЛЮЧЕВЫХ СЛОВ
+            session_repo = self.repositories['session_repo']
+            session.generated_title = generated_title
+            session.current_step = "title_generated"
+            session.keywords = []
+
+            session_repo.update(
+                session.id,
+                generated_title=generated_title,
+                current_step="title_generated",
+                keywords=[]
+            )
+
+            # Показываем заголовок с кнопками
+            builder = InlineKeyboardBuilder()
+            builder.button(text="✅ Принять", callback_data=f"approve_title_{session.id}")
+            builder.button(text="🔄 Перегенерировать", callback_data="regenerate_title")
+            builder.button(text="📝 Изменить параметры", callback_data="change_params")
+            builder.adjust(1)
+
+            # Формируем текст
+            text = f"📝 <b>Предлагаю заголовок (простая генерация):</b>\n\n"
+            text += f"<code>{generated_title}</code>\n\n"
+            text += f"📋 <b>Параметры товара:</b>\n"
+            text += f"• <b>Категория:</b> {category.name}\n"
+            text += f"• <b>Назначение:</b> {session.purpose}\n"
+
+            if session.additional_params:
+                text += f"• <b>Доп. параметры:</b> {', '.join(session.additional_params)}\n"
+
+            text += f"\n🔸 <i>Заголовок сгенерирован только на основе указанных параметров</i>"
+
+            await message.answer(
+                text,
+                reply_markup=builder.as_markup()
+            )
+
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка простой генерации: {e}", exc_info=True)
+
+            builder = InlineKeyboardBuilder()
+            builder.button(text="📝 Изменить параметры", callback_data="change_params")
+            builder.button(text="🔄 Попробовать еще раз", callback_data="generate_title")
+            builder.adjust(1)
+
+            await message.answer(
+                f"❌ <b>Ошибка генерации:</b> {str(e)[:200]}\n\n"
+                "Попробуйте изменить параметры или попробовать еще раз:",
+                reply_markup=builder.as_markup()
+            )
+
     async def show_generate_options(self, message: Message):
         """Показать опции генерации в зависимости от выбранного режима"""
         user_id = message.from_user.id
@@ -129,7 +250,8 @@ class GenerationHandler(BaseMessageHandler):
                     # Переключаемся на простую генерацию
                     session.generation_mode = 'simple'
                     session_repo.update(session.id, generation_mode='simple')
-                    await self._show_simple_generation_ui(message, session)
+                    # ЗАПУСКАЕМ ПРОСТУЮ ГЕНЕРАЦИЮ
+                    await self._generate_title_simple_from_message(message, session)
 
             except Exception as e:
                 self.logger.error(f"❌ Ошибка при создании тестовых данных: {e}", exc_info=True)
@@ -140,14 +262,19 @@ class GenerationHandler(BaseMessageHandler):
                 # Переключаемся на простую генерацию
                 session.generation_mode = 'simple'
                 session_repo.update(session.id, generation_mode='simple')
-                await self._show_simple_generation_ui(message, session)
+                # ЗАПУСКАЕМ ПРОСТУЮ ГЕНЕРАЦИЮ
+                await self._generate_title_simple_from_message(message, session)
 
         else:
             # Простая генерация - НЕ создаем тестовые данные, сразу переходим к генерации
             await message.answer(f"🚀 <b>Начинаю простую генерацию для категории:</b> {category_name}")
 
-            # Сразу вызываем генерацию заголовка
-            await self._generate_title_simple(session)
+            # ВАЖНО: Запускаем генерацию сразу после сообщения
+            await asyncio.sleep(0.5)  # Небольшая задержка для лучшего UX
+
+            # Создаем искусственный callback для имитации нажатия кнопки
+            # Но лучше использовать метод для работы с сообщениями напрямую
+            await self._generate_title_simple_from_message(message, session)
 
     async def _show_simple_generation_ui(self, message: Message, session):
         """Показать интерфейс для простой генерации"""
@@ -387,11 +514,19 @@ class GenerationHandler(BaseMessageHandler):
             self.logger.error(f"Ошибка сбора данных: {e}")
             await callback.message.edit_text("❌ Ошибка при сборе данных")
 
+    # В generation_handler.py изменим метод _generate_title_simple:
     async def _generate_title_simple(self, callback: CallbackQuery, session):
-        """Простая генерация заголовка через OpenAI"""
+        """Простая генерация заголовка через OpenAI - только на основе параметров"""
         user_id = callback.from_user.id
 
-        await callback.message.edit_text("🚀 <b>Генерирую заголовок (простой режим)...</b>")
+        # Сразу отвечаем на callback
+        try:
+            await callback.answer("🚀 Начинаю генерацию...")
+        except Exception:
+            pass  # Игнорируем ошибки с callback
+
+        # Отправляем сообщение о начале генерации (новое сообщение)
+        msg = await callback.message.answer("🚀 <b>Генерирую заголовок (простой режим)...</b>")
 
         try:
             # Получаем данные категории
@@ -399,83 +534,131 @@ class GenerationHandler(BaseMessageHandler):
             category = category_repo.get_by_id(session.category_id)
 
             if not category:
-                await callback.message.edit_text("❌ Категория не найдена")
+                await msg.edit_text("❌ Категория не найдена")
                 return
 
             # Используем OpenAI сервис напрямую
             if 'openai' not in self.services:
-                await callback.message.edit_text("❌ Сервис OpenAI не инициализирован")
+                await msg.edit_text("❌ Сервис OpenAI не инициализирован")
                 return
 
             openai_service = self.services['openai']
 
             # Формируем промпт для генерации заголовка
-            prompt = self._build_simple_title_prompt(session, category)
+            user_prompt = f"""
+                Создай продающий заголовок для товара на маркетплейсе со следующими параметрами:
+        
+                Категория: {category.name}
+                Назначение товара: {session.purpose}
+                Дополнительные параметры: {', '.join(session.additional_params) if session.additional_params else 'нет'}
+        
+                Требования к заголовку:
+                1. Максимально продающий и привлекательный
+                2. Включает основные преимущества товара
+                3. Соответствует категории "{category.name}"
+                4. Оптимизирован для поиска на маркетплейсе
+                5. Длина от 5 до 10 слов
+                6. Не используй HTML теги
+                7. Пиши на русском языке
+                8. Не используй специальные символы "!, :, ^, )" и т.д.
+                9. Дополнительные параметры должны привлекательно встраиваться в заголовок. Например: не "Зимняя рубашка для Нового года", а "Новогодняя зимняя рубашка"
+                10. Ты создаешь заголовок в карточке товара на маркетплейсе
+                """
+            system_prompt = getattr(category, 'system_prompt_title', None)
+
+            if not system_prompt:
+                system_prompt = """
+                Ты профессиональный копирайтер для маркетплейсов Wildberries и OZON.
+                Создавай продающие, естественные заголовки для товаров.
+                """
 
             # Генерируем заголовок
-            generated_title = await openai_service.generate_title(
-                category=category.name,
-                purpose=session.purpose,
-                keywords=[],  # Для простой генерации не используем ключевые слова
-                additional_params=session.additional_params if session.additional_params else [],
-                system_prompt=getattr(category, 'system_prompt_title', '')
+            await msg.edit_text("🚀 <b>Генерирую заголовок с помощью OpenAI...</b>")
+
+            generated_title = await openai_service.generate_text(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                max_tokens=150,
+                temperature=0.7
             )
 
             if not generated_title:
-                await callback.message.edit_text("❌ Не удалось сгенерировать заголовок")
+                await msg.edit_text("❌ Не удалось сгенерировать заголовок")
                 return
 
-            # Генерируем ключевые слова на основе заголовка
-            keywords_prompt = self._build_keywords_prompt(generated_title, category.name)
+            # Очищаем заголовок
+            generated_title = generated_title.strip()
 
-            # Для простой генерации используем заголовок для извлечения ключевых слов
-            if hasattr(openai_service, 'generate_text'):
-                keywords_text = await openai_service.generate_text(
-                    prompt=keywords_prompt,
-                    max_tokens=100
-                )
-                keywords = self._parse_keywords(keywords_text)
-            else:
-                # Альтернативный способ - использовать базовые ключевые слова
-                keywords = [category.name, session.purpose]
+            # Убираем кавычки и префиксы
+            generated_title = generated_title.strip('"').strip("'").strip()
+            if generated_title.startswith("Заголовок:"):
+                generated_title = generated_title.replace("Заголовок:", "").strip()
+            if generated_title.startswith('"') and generated_title.endswith('"'):
+                generated_title = generated_title[1:-1].strip()
 
-            # Сохраняем результаты в сессии (используем репозиторий из self.repositories)
+            # Проверяем длину
+            if len(generated_title) < 10:
+                generated_title = f"{category.name} {session.purpose} - {generated_title}"
+
+            self.logger.info(f"✅ Сгенерирован заголовок: {generated_title}")
+
+            # Сохраняем в сессии
             session_repo = self.repositories['session_repo']
             session.generated_title = generated_title
-            session.keywords = keywords
             session.current_step = "title_generated"
+            session.keywords = []
 
-            # Используем метод update из BaseRepository через репозиторий сессий
             session_repo.update(
                 session.id,
                 generated_title=generated_title,
-                keywords=keywords,
-                current_step="title_generated"
+                current_step="title_generated",
+                keywords=[]
             )
 
-            # Показываем заголовок с кнопками
+            # Показываем заголовок с кнопками в НОВОМ сообщении
             builder = InlineKeyboardBuilder()
             builder.button(text="✅ Принять", callback_data=f"approve_title_{session.id}")
             builder.button(text="🔄 Перегенерировать", callback_data="regenerate_title")
             builder.button(text="📝 Изменить параметры", callback_data="change_params")
             builder.adjust(1)
 
-            await callback.message.edit_text(
-                f"📝 <b>Предлагаю заголовок (простая генерация):</b>\n\n"
-                f"<code>{generated_title}</code>\n\n"
-                f"🔑 <b>Ключевые слова:</b> {', '.join(keywords[:8]) if keywords else 'не сгенерированы'}",
-                reply_markup=builder.as_markup()
-            )
+            # Формируем текст
+            text = f"📝 <b>Предлагаю заголовок (простая генерация):</b>\n\n"
+            text += f"<code>{generated_title}</code>\n\n"
+            text += f"📋 <b>Параметры товара:</b>\n"
+            text += f"• <b>Категория:</b> {category.name}\n"
+            text += f"• <b>Назначение:</b> {session.purpose}\n"
+
+            if session.additional_params:
+                text += f"• <b>Доп. параметры:</b> {', '.join(session.additional_params)}\n"
+
+            text += f"\n🔸 <i>Заголовок сгенерирован только на основе указанных параметров</i>"
+
+            # Удаляем сообщение о генерации и отправляем новое с результатом
+            try:
+                await msg.delete()
+            except:
+                pass
+
+            await callback.message.answer(text, reply_markup=builder.as_markup())
 
         except Exception as e:
             self.logger.error(f"❌ Ошибка простой генерации: {e}", exc_info=True)
-            await callback.message.edit_text(
-                f"❌ <b>Ошибка генерации:</b> {str(e)[:200]}\n\n"
-                "Попробуйте изменить параметры или начать заново с /reset"
+
+            try:
+                await msg.edit_text(f"❌ <b>Ошибка генерации:</b> {str(e)[:200]}")
+            except:
+                await callback.message.answer(f"❌ <b>Ошибка генерации:</b> {str(e)[:200]}")
+
+            builder = InlineKeyboardBuilder()
+            builder.button(text="📝 Изменить параметры", callback_data="change_params")
+            builder.button(text="🔄 Попробовать еще раз", callback_data="generate_title")
+            builder.adjust(1)
+
+            await callback.message.answer(
+                "Попробуйте изменить параметры или попробовать еще раз:",
+                reply_markup=builder.as_markup()
             )
-
-        await callback.answer()
-
 
     def _build_simple_title_prompt(self, session, category) -> str:
         """Создать промпт для простой генерации заголовка"""
@@ -494,9 +677,11 @@ class GenerationHandler(BaseMessageHandler):
         5. Длина от 5 до 10 слов
         6. Не используй HTML теги
         7. Пиши на русском языке
-        8. Не используй специальные символы
+        8. Не используй специальные символы "!, :, ^, )" и т.д.
         9. Дополнительные параметры должны привлекательно встраиваться в заголовок. Например: не "Зимняя рубашка для Нового года", а "Новогодняя зимняя рубашка"
+        10. Ты создаешь заголовок в карточке товара на маркетплейсе
         """
+
 
     def _build_keywords_prompt(self, title: str, category_name: str) -> str:
         """Создать промпт для генерации ключевых слов"""
@@ -622,6 +807,8 @@ class GenerationHandler(BaseMessageHandler):
             )
 
         await callback.answer()
+
+    # Добавьте этот метод в класс CategoryHandler:
 
 
     # Остальные методы остаются без изменений...
