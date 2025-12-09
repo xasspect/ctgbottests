@@ -1,3 +1,4 @@
+# app/bot/bot.py - обновленная версия
 import logging
 import asyncio
 from aiogram import Bot, Dispatcher
@@ -7,13 +8,15 @@ from app.config.config import config
 from app.bot.handlers.start_handler import StartHandler
 from app.bot.handlers.category_handler import CategoryHandler
 from app.bot.handlers.generation_handler import GenerationHandler
+from app.bot.handlers.admin_handler import AdminHandler
+from app.bot.handlers.session_handler import SessionHandler
 
 
 class ContentGeneratorBot:
     """Главный класс Telegram бота на aiogram"""
 
     def __init__(self, config):
-        self.config = config  # Сохраняем конфигурацию
+        self.config = config
         self.bot = None
         self.dp = None
         self.handlers = []
@@ -33,13 +36,13 @@ class ContentGeneratorBot:
         # Инициализация репозиториев
         await self._initialize_repositories()
 
-        # Инициализация сервисов (теперь передаем config)
+        # Инициализация сервисов
         await self._initialize_services()
 
         # Инициализация aiogram
         await self._initialize_aiogram()
 
-        # Инициализация обработчиков (теперь передаем config)
+        # Инициализация обработчиков
         await self._initialize_handlers()
 
         self.logger.info("✅ Bot initialization completed")
@@ -52,57 +55,34 @@ class ContentGeneratorBot:
             from app.database.repositories.session_repo import SessionRepository
             from app.database.repositories.content_repo import ContentRepository
 
-            # Создаем экземпляры репозиториев
-            user_repo = UserRepository()
-            category_repo = CategoryRepository()
-            session_repo = SessionRepository()
-            content_repo = ContentRepository()
-
             self.repositories = {
-                'user_repo': user_repo,
-                'category_repo': category_repo,
-                'session_repo': session_repo,
-                'content_repo': content_repo,
+                'user_repo': UserRepository(),
+                'category_repo': CategoryRepository(),
+                'session_repo': SessionRepository(),
+                'content_repo': ContentRepository(),
             }
 
             self.logger.info(f"✅ Repositories initialized: {list(self.repositories.keys())}")
 
         except Exception as e:
             self.logger.error(f"❌ Error initializing repositories: {e}")
-            # Создаем пустой словарь, чтобы избежать KeyError
             self.repositories = {}
 
     async def _initialize_services(self):
         """Инициализация сервисов"""
-        from app.services.mpstats_service import MPStatsService
         from app.services.openai_service import OpenAIService
         from app.services.content_service import ContentService
-        from app.services.mpstats_scraper_service import MPStatsScraperService
-        from app.utils.data_gen_service import DataGenService
-        from app.utils.keywords_processor import KeywordsProcessor
+        from app.services.prompt_service import PromptService
 
         try:
-            # Инициализируем сервисы
-            mpstats_service = MPStatsService()
             openai_service = OpenAIService()
-
-            # Инициализируем ContentService с зависимостями
-            content_service = ContentService(mpstats_service, openai_service)
-
-            # Инициализируем скрапер с конфигом (только для продвинутой генерации)
-            scraper_service = MPStatsScraperService(self.config)
-            await scraper_service.initialize_scraper()
-
-            data_gen_service = DataGenService(self.config)
-            keywords_processor = KeywordsProcessor(preserve_excel=False, target_column="Кластер WB")
+            content_service = ContentService(None, openai_service)
+            prompt_service = PromptService()
 
             self.services = {
-                'mpstats': mpstats_service,
                 'openai': openai_service,
                 'content': content_service,
-                'scraper': scraper_service,  # Только для продвинутой генерации
-                'data_gen': data_gen_service,  # Только для продвинутой генерации
-                'keywords_processor': keywords_processor  # Только для продвинутой генерации
+                'prompt': prompt_service
             }
 
             self.logger.info("✅ Services initialized")
@@ -110,7 +90,6 @@ class ContentGeneratorBot:
 
         except Exception as e:
             self.logger.error(f"❌ Error initializing services: {e}")
-            # В случае ошибки инициализируем только базовые сервисы
             self.services = {
                 'openai': OpenAIService(),
                 'content': ContentService(None, OpenAIService())
@@ -131,11 +110,12 @@ class ContentGeneratorBot:
 
     async def _initialize_handlers(self):
         """Инициализация обработчиков"""
-        # Меняем порядок: GenerationHandler раньше CategoryHandler
         self.handlers = [
             StartHandler(self.config, self.services, self.repositories),
-            GenerationHandler(self.config, self.services, self.repositories),  # Первый - команды
-            CategoryHandler(self.config, self.services, self.repositories),  # Второй - общие обработчики
+            CategoryHandler(self.config, self.services, self.repositories),
+            GenerationHandler(self.config, self.services, self.repositories),
+            SessionHandler(self.config, self.services, self.repositories),
+            AdminHandler(self.config, self.services, self.repositories),
         ]
 
         for handler in self.handlers:
@@ -144,6 +124,7 @@ class ContentGeneratorBot:
                 self.logger.info(f"✅ Registered handler: {handler.__class__.__name__}")
             else:
                 self.logger.error(f"❌ Handler is None!")
+
     async def run(self):
         """Запуск бота"""
         self.logger.info("✅ Starting bot polling...")
@@ -161,11 +142,6 @@ class ContentGeneratorBot:
             if self.bot:
                 await self.bot.session.close()
                 self.logger.info("✅ Bot session closed")
-
-            # ЗАКОММЕНТИРУЕМ или удаляем этот вызов
-            # if 'scraper' in self.services:
-            #     self.services['scraper'].cleanup_downloads()
-            #     self.logger.info("✅ Scraper downloads cleaned")
 
             from app.database.database import database
             if database:

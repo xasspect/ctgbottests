@@ -28,47 +28,37 @@ class CategoryHandler(BaseMessageHandler):
             await self.scraper_service.initialize_scraper()
 
         dp.include_router(self.router)
-        self.router.message.register(self.show_categories, Command(commands=["categories"]))
+        self.router.message.register(self.show_categories_command, Command(commands=["categories"]))
         self.router.message.register(self.reset_session, Command(commands=["reset"]))
         self.router.message.register(self.handle_additional_params, F.text & ~F.command)
         self.router.callback_query.register(self.handle_category_select, F.data.startswith("category_"))
         self.router.callback_query.register(self.handle_purpose_select, F.data.startswith("purpose_"))
-        self.router.callback_query.register(
-            self.handle_set_gen_mode_simple,
-            F.data == "set_gen_mode_simple"
-        )
-        self.router.callback_query.register(
-            self.handle_set_gen_mode_advanced,
-            F.data == "set_gen_mode_advanced"
-        )
-        self.router.callback_query.register(
-            self.handle_go_to_generate,
-            F.data == "go_to_generate"
-        )
-        self.router.message.register(self.start_scraping, Command(commands=["scrape"]))
-        self.router.callback_query.register(
-            self.handle_start_generation,
-            F.data.startswith("start_generation_")
-        )
-        self.router.callback_query.register(
-            self.handle_change_params,
-            F.data == "change_params"
-        )
-        self.router.callback_query.register(
-            self.handle_change_additional_params,
-            F.data == "change_additional_params"
-        )
-        self.router.callback_query.register(
-            self.handle_back_to_generation,
-            F.data == "back_to_generation"
-        )
-        self.router.message.register(self.handle_update_additional_params, F.text & ~F.command)
+        self.router.callback_query.register(self.handle_set_gen_mode_simple, F.data == "set_gen_mode_simple")
+        self.router.callback_query.register(self.handle_set_gen_mode_advanced, F.data == "set_gen_mode_advanced")
         self.router.callback_query.register(self.handle_back_to_categories, F.data == "back_to_categories")
         self.router.callback_query.register(self.handle_back_to_main_menu, F.data == "back_to_main_menu")
         self.router.callback_query.register(self.handle_back_to_purpose, F.data == "back_to_purpose")
         self.router.callback_query.register(self.handle_skip_additional_params, F.data == "skip_additional_params")
         self.router.callback_query.register(self.handle_back_to_generation, F.data == "back_to_generation")
+        self.router.callback_query.register(self.handle_change_params, F.data == "change_params")
+        self.router.callback_query.register(self.handle_change_additional_params, F.data == "change_additional_params")
 
+    async def show_categories_command(self, message: Message):
+        """Обработка команды /categories"""
+        await self.show_categories(message)
+    async def handle_start_button(self, callback: CallbackQuery):
+        """Обработка кнопки 'Начать' из главного меню"""
+        await callback.answer()
+        await self.show_categories(callback.message)
+
+    async def handle_my_sessions(self, callback: CallbackQuery):
+        """Обработка кнопки 'Мои сессии' из главного меню"""
+        await callback.answer()
+
+        # Используем SessionHandler для показа сессий
+        from app.bot.handlers.session_handler import SessionHandler
+        session_handler = SessionHandler(self.config, self.services, self.repositories)
+        await session_handler.show_user_sessions(callback.message)
 
     async def handle_back_to_generation(self, callback: CallbackQuery):
         """Возврат к генерации после изменения параметров"""
@@ -573,6 +563,10 @@ class CategoryHandler(BaseMessageHandler):
             self.logger.error(f"Ошибка установки способа генерации: {e}")
             await callback.answer("❌ Ошибка сохранения")
 
+    async def show_categories_command(self, message: Message):
+        """Обработка команды /categories"""
+        await self.show_categories(message)
+
     async def show_categories(self, message: Message, from_back: bool = False):
         """Показать список категорий"""
         user_id = message.from_user.id
@@ -596,9 +590,7 @@ class CategoryHandler(BaseMessageHandler):
                 callback_data=f"category_{category_id}"
             )
 
-        # ВСЕГДА добавляем кнопку "Назад в меню"
         builder.button(text="↩️ Назад в меню", callback_data="back_to_main_menu")
-
         builder.adjust(1)
 
         welcome_text = "📁 <b>Выберите категорию товара:</b>"
@@ -819,7 +811,7 @@ class CategoryHandler(BaseMessageHandler):
             await callback.answer("❌ Сессия не найдена")
             return
 
-        # Сохраняем пустые параметры
+
         session.additional_params = []
         session.current_step = "params_added"
 
@@ -1022,7 +1014,14 @@ class CategoryHandler(BaseMessageHandler):
         user_id = message.from_user.id
 
         session_repo = self.repositories['session_repo']
-        session_repo.deactivate_all_sessions(user_id)
+        active_sessions = session_repo.get_active_session(user_id)
+        if active_sessions:
+            # Если get_active_session возвращает одну сессию, а не список
+            if isinstance(active_sessions, list):
+                for session in active_sessions:
+                    session_repo.update(session.id, is_active=False)
+            else:
+                session_repo.update(active_sessions.id, is_active=False)
 
         await message.answer(
             "🔄 <b>Сессия сброшена</b>\n"

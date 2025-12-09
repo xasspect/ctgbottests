@@ -1,4 +1,4 @@
-# app/bot/handlers/base_handler.py
+
 import logging
 from abc import ABC, abstractmethod
 
