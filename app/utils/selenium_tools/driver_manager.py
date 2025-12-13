@@ -34,6 +34,42 @@ class ChromeDriverManager:
         self.driver = None
         logger.info(f"ChromeDriverManager initialized: headless={headless}, stealth={self.use_stealth}")
 
+    def get_downloaded_files(self, download_dir: Optional[str] = None):
+        """
+        Получает список скачанных файлов.
+
+        Args:
+            download_dir: Директория для скачивания (если None, используется последняя указанная)
+
+        Returns:
+            Список путей к скачанным файлам
+        """
+        if not download_dir:
+            # Можно сохранить download_dir при создании драйвера
+            if hasattr(self, 'last_download_dir'):
+                download_dir = self.last_download_dir
+            else:
+                download_dir = os.path.join(os.getcwd(), 'downloads')
+
+        if not os.path.exists(download_dir):
+            return []
+
+        # Получаем все файлы, сортируем по времени изменения (сначала самые новые)
+        files = []
+        for filename in os.listdir(download_dir):
+            filepath = os.path.join(download_dir, filename)
+            if os.path.isfile(filepath):
+                files.append({
+                    'path': filepath,
+                    'name': filename,
+                    'size': os.path.getsize(filepath),
+                    'modified': os.path.getmtime(filepath)
+                })
+
+        # Сортируем по времени изменения (сначала самые новые)
+        files.sort(key=lambda x: x['modified'], reverse=True)
+        return files
+
     def create_driver(
             self,
             download_dir: Optional[str] = None,

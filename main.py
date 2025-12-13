@@ -8,10 +8,10 @@ import logging
 from app.config.config import config
 from app.bot.bot import ContentGeneratorBot
 from app.utils.logger import setup_logging
-
+ 
 
 async def main():
-    """Основная асинхронная функция"""
+    """Основная асинхронная функция""" 
     setup_logging()
     logger = logging.getLogger(__name__)
 
