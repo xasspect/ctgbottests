@@ -52,6 +52,8 @@ class Database:
     # app/database/database.py
     # Убедитесь, что метод create_tables() работает с обновленными моделями
 
+
+
     def create_tables(self):
         """Создание всех таблиц в PostgreSQL"""
         try:
@@ -59,6 +61,10 @@ class Database:
             from app.database.models.category import Category
             from app.database.models.session import UserSession
             from app.database.models.content import GeneratedContent
+
+            if config.app.debug:  # Только в режиме отладки
+                logger.warning("⚠️ Удаление существующих таблиц...")
+                self.Base.metadata.drop_all(bind=self.engine)
 
             self.Base.metadata.create_all(bind=self.engine)
             logger.info("✅ PostgreSQL tables created")
@@ -88,47 +94,132 @@ class Database:
                     # Категории из вашего примера
                     default_categories = [
                         Category(
-                            id="electronics",
-                            name="📱 Электроника",
-                            description="Смартфоны, планшеты, гаджеты и аксессуары",
+                            id="decorative_panels",
+                            name="Декоративные панели",
+                            hidden_description="панели ПВХ обычно 48 на 48 см",
+                            description="Декоративные ПВХ панели для отделки стен",
                             purposes={
-                                "gaming": "🎮 Для игр",
-                                "everyday": "📅 Повседневная",
-                                "business": "💼 Бизнес",
-                                "creative": "🎨 Для творчества"
+                                "kitchen": "Для кухни",
+                                "bathroom": "Для ванной",
+                                "tile": "Плитка",
+                                "stone": "Под камень",
+                                "wood": "Под дерево",
+                                "white": "Белая",
+                                "3d": "3Д",
+                                "marble": "Под мрамор",
+                                "brick": "Под кирпич",
+                                "with_pattern": "С рисунком",
+                                "in_roll": "В рулоне",
+                                "self_adhesive": "Самоклеящиеся"
                             }
                         ),
                         Category(
-                            id="clothing",
-                            name="👕 Одежда и обувь",
-                            description="Одежда, обувь и аксессуары",
+                            id="soft_panels",
+                            name="Мякиши",
+                            hidden_description="мягкие панели нестандартных размеров",
+                            description="Мягкие звукопоглощающие панели",
                             purposes={
-                                "sport": "🏃‍♂️ Спортивная",
-                                "casual": "👖 Повседневная",
-                                "office": "👔 Офисная",
-                                "evening": "🌙 Вечерняя"
+                                "kitchen": "Для кухни",
+                                "bathroom": "Для ванной",
+                                "stone": "Под камень",
+                                "wood": "Под дерево",
+                                "white": "Белая",
+                                "3d": "3Д",
+                                "with_pattern": "С рисунком"
                             }
                         ),
                         Category(
-                            id="home",
-                            name="🏠 Дом и сад",
-                            description="Товары для дома, мебель, декор",
+                            id="self_adhesive_wallpaper",
+                            name="Самоклеящиеся обои",
+                            hidden_description="",
+                            description="Самоклеящиеся обои для быстрой отделки",
                             purposes={
-                                "kitchen": "🍳 Для кухни",
-                                "bedroom": "🛏 Для спальни",
-                                "garden": "🌳 Для сада",
-                                "bathroom": "🛁 Для ванной"
+                                "kitchen": "Для кухни",
+                                "bathroom": "Для ванной",
+                                "tile": "Плитка",
+                                "stone": "Под камень",
+                                "wood": "Под дерево",
+                                "white": "Белая",
+                                "3d": "3Д",
+                                "marble": "Под мрамор",
+                                "brick": "Под кирпич",
+                                "with_pattern": "С рисунком",
+                                "in_roll": "В рулоне",
+                                "self_adhesive": "Самоклеящиеся"
                             }
                         ),
                         Category(
-                            id="beauty",
-                            name="💄 Красота и здоровье",
-                            description="Косметика, уход, здоровый образ жизни",
+                            id="pet_panels",
+                            name="ПЭТы",
+                            hidden_description="самоклеящиеся ПВХ панели",
+                            description="Самоклеящиеся ПЭТ панели",
                             purposes={
-                                "skincare": "🧴 Уход за кожей",
-                                "makeup": "💋 Макияж",
-                                "hair": "💇‍♀️ Для волос",
-                                "wellness": "🌿 Для здоровья"
+                                "kitchen": "Для кухни",
+                                "bathroom": "Для ванной",
+                                "tile": "Плитка",
+                                "stone": "Под камень",
+                                "wood": "Под дерево",
+                                "white": "Белая",
+                                "marble": "Под мрамор",
+                                "brick": "Под кирпич",
+                                "with_pattern": "С рисунком",
+                                "self_adhesive": "Самоклеящиеся"
+                            }
+                        ),
+                        Category(
+                            id="baby_panels",
+                            name="Малышарики",
+                            hidden_description="маленькие декоративные чаще всего 3д панели 29 на 29 см",
+                            description="Декоративные 3D панели малого формата",
+                            purposes={
+                                "kitchen": "Для кухни",
+                                "bathroom": "Для ванной",
+                                "white": "Белая",
+                                "3d": "3Д",
+                                "with_pattern": "С рисунком"
+                            }
+                        ),
+                        Category(
+                            id="aprons",
+                            name="Фартуки",
+                            hidden_description="пластиковые фартуки на кухню",
+                            description="Кухонные фартуки из пластика",
+                            purposes={
+                                "kitchen": "Для кухни",
+                                "tile": "Плитка",
+                                "stone": "Под камень",
+                                "wood": "Под дерево",
+                                "white": "Белая",
+                                "3d": "3Д",
+                                "marble": "Под мрамор",
+                                "brick": "Под кирпич",
+                                "with_pattern": "С рисунком"
+                            }
+                        ),
+                        Category(
+                            id="3d_panels",
+                            name="3Д панели",
+                            hidden_description="",
+                            description="Объемные 3D панели для стен",
+                            purposes={
+                                "kitchen": "Для кухни",
+                                "bathroom": "Для ванной",
+                                "white": "Белая",
+                                "3d": "3Д",
+                                "with_pattern": "С рисунком"
+                            }
+                        ),
+                        Category(
+                            id="battens",
+                            name="Рейки",
+                            hidden_description="панели под дерево реечные",
+                            description="Реечные панели под дерево",
+                            purposes={
+                                "kitchen": "Для кухни",
+                                "bathroom": "Для ванной",
+                                "wood": "Под дерево",
+                                "white": "Белая",
+                                "with_pattern": "С рисунком"
                             }
                         )
                     ]
@@ -158,12 +249,14 @@ class Database:
             with self.engine.connect() as conn:
                 # Список таблиц и колонок для проверки
                 tables_columns = {
+                    'categories': [
+                        ('hidden_description', 'VARCHAR(500)', "''"),  # ← ДОБАВЬТЕ ЭТУ СТРОКУ
+                        ('purposes', 'JSONB', "'{}'::jsonb"),
+                        ('description', 'VARCHAR(500)', "''")  # ← Также убедитесь, что description есть
+                    ],
                     'user_sessions': [
                         ('generation_mode', 'VARCHAR(50)', "'advanced'"),
                         ('is_active', 'BOOLEAN', 'true')
-                    ],
-                    'categories': [
-                        ('purposes', 'JSONB', "'{}'::jsonb")  # Добавляем поле purposes
                     ]
                 }
 
@@ -181,7 +274,7 @@ class Database:
                             logger.info(f"🔄 Добавляю колонку '{column_name}' в таблицу '{table}'...")
 
                             sql = f"ALTER TABLE {table} ADD COLUMN {column_name} {column_type}"
-                            if default_value != 'NULL':
+                            if default_value and default_value != "'NULL'" and default_value != "NULL":
                                 sql += f" DEFAULT {default_value}"
 
                             conn.execute(text(sql))

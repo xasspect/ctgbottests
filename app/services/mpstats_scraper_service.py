@@ -13,6 +13,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from app.config.mpstats_ui_config import MPSTATS_UI_CONFIG
 
 from app.utils.selenium_tools.download_monitor import MPStatsDownloader
 from app.utils.selenium_tools.button_controller import ButtonFinder
@@ -29,7 +30,24 @@ class MPStatsScraperService:
         self.driver_manager = ChromeDriverManager
         self.download_dir = Path("downloads/mpstats")
         self.logger = logger
+        self.email_config = MPSTATS_UI_CONFIG["login"]["email_field"]
+        self.password_config = MPSTATS_UI_CONFIG["login"]["password_field"]
+        self.requests_btn_config = MPSTATS_UI_CONFIG["tabs"]["requests"]
+        self.words_config = MPSTATS_UI_CONFIG["tabs"]["words"]
+        self.textarea_config = MPSTATS_UI_CONFIG["forms"]["textarea"]
+        self.find_queries_btn_config = MPSTATS_UI_CONFIG["forms"]["find_queries_btn"]
+        self.downloads_config = MPSTATS_UI_CONFIG["download"]["download_btn"]
 
+        self.by_mapping = {
+            "NAME": By.NAME,
+            "ID": By.ID,
+            "XPATH": By.XPATH,
+            "CLASS_NAME": By.CLASS_NAME,
+            "CSS_SELECTOR": By.CSS_SELECTOR,
+            "TAG_NAME": By.TAG_NAME,
+            "LINK_TEXT": By.LINK_TEXT,
+            "PARTIAL_LINK_TEXT": By.PARTIAL_LINK_TEXT
+        }
 
     async def initialize_scraper(self):
         """Инициализация скрапера"""
@@ -197,6 +215,114 @@ class MPStatsScraperService:
         logger.info(f"✅ Драйвер создан. Размер окна: {width}x{height}")
         return driver
 
+    async def download_keywords_data(self, driver, params: Dict[str, Any]) -> str:
+        """
+        Полная последовательность действий для скачивания данных
+        Возвращает путь к скачанному Excel файлу
+        """
+        try:
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            import time
+
+            self.logger.info("🔄 Начинаю процесс скачивания данных...")
+
+            """
+            !!!
+            НЕЙРОНКА НАГЕНЕРИЛА ХУЙНИ download_keywords_data ВЫЗЫВАЕТСЯ ИЗ /app/services/data_collection_service.py
+            ТАМ БЛЯТЬ НУЖНО НАНИМАТЬ ДЕТЕКТИВА ЧТОБЫ РАЗОБРАТЬСЯ ЧТО И ОТКУДА ВЫЗЫВАЕТСЯ НАХУЙ Я НЕ БУДУ ЭТИМ ЗАНИМАТЬСЯ
+            БУДУЩИЙ Я (РАБ ЭТОЙ ВЕЛИКОЙ КОМПАНИИ) ИЛИ ЧЕЛОВЕК КОТОРОГО НАНЯЛИ РАЗБИРАТЬСЯ В ЭТЙ ЛЕГАСИ ХУЙНИ ДАЙ ТЕБЕ
+            БОГ ЗДОРОВЬЯ
+            
+            олежа энвилоуп 14.12.2025 11:12
+            """
+
+            # 2. Переключение на вкладку "Слова"
+            try:
+                elements = driver.find_elements(
+                    self.by_mapping[self.words_config["by"]],
+                    self.words_config["value"]
+                )
+                if len(elements) > 1:
+                    driver.execute_script("arguments[0].click();", elements[1])
+                    self.logger.info("✅ Переключились на 'Слова'")
+                    time.sleep(2)
+            except Exception as e:
+                self.logger.warning(f"Не удалось переключиться на 'Слова': {e}")
+
+            # 3. Скачивание файла (первая кнопка)
+            try:
+                elements = driver.find_elements(
+                    self.by_mapping[self.downloads_config["by"]],
+                    self.downloads_config["value"]
+                )
+                if len(elements) > 0:
+                    driver.execute_script("arguments[0].click();", elements[0])
+                    self.logger.info("✅ Кликнули на первую кнопку скачивания")
+                    time.sleep(2)
+            except Exception as e:
+                self.logger.warning(f"Не удалось кликнуть первую кнопку: {e}")
+
+            # 4. Скачивание файла (вторая кнопка)
+            try:
+                elements = driver.find_elements(
+                    self.by_mapping[self.downloads_config["by"]],
+                    self.downloads_config["value"]
+                )
+                if len(elements) > 2:
+                    driver.execute_script("arguments[0].click();", elements[2])
+                    self.logger.info("✅ Кликнули на вторую кнопку скачивания")
+                    time.sleep(2)
+            except Exception as e:
+                self.logger.warning(f"Не удалось кликнуть вторую кнопку: {e}")
+
+            # 5. Ожидание скачивания
+            downloaded_file = await self._wait_for_download()
+
+            if downloaded_file:
+                self.logger.info(f"✅ Файл скачан: {downloaded_file}")
+                return downloaded_file
+            else:
+                raise Exception("Не удалось скачать файл")
+
+        except Exception as e:
+            self.logger.error(f"Ошибка при скачивании: {e}")
+            raise
+
+    async def _wait_for_download(self, timeout: int = 60, check_interval: int = 1) -> str:
+        """Ожидание завершения скачивания файла"""
+        import time
+
+        initial_files = set()
+        if os.path.exists(self.download_dir):
+            initial_files = set(os.listdir(self.download_dir))
+
+        self.logger.info(f"⏳ Ожидаю скачивания файла...")
+
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if os.path.exists(self.download_dir):
+                current_files = set(os.listdir(self.download_dir))
+                new_files = current_files - initial_files
+
+                if new_files:
+                    # Ищем .xlsx файлы
+                    xlsx_files = [f for f in new_files if f.endswith('.xlsx')]
+
+                    if xlsx_files:
+                        file_path = os.path.join(self.download_dir, xlsx_files[0])
+
+                        # Проверяем, что файл полностью скачан
+                        if os.path.getsize(file_path) > 0:
+                            self.logger.info(f"✅ Файл готов: {xlsx_files[0]}")
+                            return file_path
+
+            await asyncio.sleep(check_interval)
+
+        self.logger.error("⏰ Таймаут ожидания скачивания")
+        return None
+
     async def _login_to_mpstats(self):
         """Авторизация в MPStats"""
         logger.info("Авторизация в MPStats...")
@@ -205,44 +331,46 @@ class MPStatsScraperService:
             # Переход на страницу
             self.driver.get('https://mpstats.io/seo/keywords/expanding')
             time.sleep(random.uniform(2, 4))
+            current_url = self.driver.current_url
+            if current_url == 'https://mpstats.io/login':
 
-            # Ожидание формы логина
-            WebDriverWait(self.driver, 30).until(
-                EC.presence_of_element_located((By.NAME, "mpstats-login-form-name"))
-            )
+                # Ожидание формы логина
+                WebDriverWait(self.driver, 30).until(
+                    EC.presence_of_element_located((By.NAME, "mpstats-login-form-name"))
+                )
 
-            # Ввод email
-            email_input = self.driver.find_element(By.NAME, "mpstats-login-form-name")
-            email_input.click()
-            time.sleep(random.uniform(0.2, 0.5))
+                # Ввод email
+                email_input = self.driver.find_element(
+                    self.by_mapping[self.email_config["by"]],
+                    self.email_config["value"]
+                )
+                email = self.config.api.mpstats_email
+                email_input.send_keys(email)
 
-            email = self.config.api.mpstats_email
-            for char in email:
-                email_input.send_keys(char)
-                time.sleep(random.uniform(0.05, 0.1))
+                # Ввод пароля
+                password_input = self.driver.find_element(
+                    self.by_mapping[self.password_config["by"]],
+                    self.password_config["value"]
+                )
+                password = self.config.api.mpstats_pswd
+                password_input.send_keys(password)
 
-            # Ввод пароля
-            password_input = self.driver.find_element(By.NAME, "mpstats-login-form-password")
-            password_input.click()
-            time.sleep(random.uniform(0.2, 0.5))
+                # Нажатие Enter для входа
+                password_input.send_keys(Keys.ENTER)
 
-            password = self.config.api.mpstats_pswd
-            for char in password:
-                password_input.send_keys(char)
-                time.sleep(random.uniform(0.05, 0.1))
+                # Ожидание успешного входа
+                WebDriverWait(self.driver, 30).until(
+                    lambda d: "expanding" in d.current_url or
+                              d.find_elements(
+                                  self.by_mapping[self.requests_btn_config["by"]],
+                                  self.requests_btn_config["value"]
+                              )
+                )
 
-            # Нажатие Enter для входа
-            actions = ActionChains(self.driver)
-            actions.send_keys(Keys.RETURN).perform()
-
-            # Ожидание успешного входа
-            WebDriverWait(self.driver, 30).until(
-                lambda d: "expanding" in d.current_url or
-                          d.find_elements(By.XPATH, "//span[text()='Запросы']")
-            )
-
-            time.sleep(random.uniform(2, 4))
-            logger.info("✅ Авторизация успешна")
+                time.sleep(random.uniform(2, 4))
+                logger.info("✅ Авторизация успешна")
+            elif current_url == 'https://mpstats.io/seo/keywords/expanding':
+                logger.info('✅ Вход без логина при помощи chrome_profile')
 
         except TimeoutException as e:
             logger.error("Таймаут при авторизации")
@@ -267,14 +395,18 @@ class MPStatsScraperService:
 
             try:
                 requests_tab = WebDriverWait(self.driver, 15).until(
-                    EC.element_to_be_clickable((By.XPATH, "//span[text()='Запросы']"))
+                    EC.element_to_be_clickable((self.by_mapping[self.requests_btn_config["by"]],
+                                                self.requests_btn_config["value"]))
                 )
 
-                actions = ActionChains(self.driver)
-                actions.move_to_element(requests_tab).perform()
+                elements = self.driver.find_elements(
+                    self.by_mapping[self.requests_btn_config["by"]],
+                    self.requests_btn_config["value"]
+                )
+                elements[1].click()
                 time.sleep(random.uniform(0.3, 0.7))
 
-                requests_tab.click()
+                # requests_tab.click()
                 logger.info("✅ Кликнули на вкладку 'Запросы'")
                 time.sleep(random.uniform(1, 2))
 
@@ -286,7 +418,7 @@ class MPStatsScraperService:
                 )
 
                 if requests_tabs:
-                    requests_tabs[0].click()
+                    requests_tabs[1].click()
                     logger.info("✅ Кликнули на альтернативную вкладку 'Запросы'")
                 else:
                     logger.warning("Вкладка 'Запросы' не найдена, продолжаем...")
@@ -294,8 +426,14 @@ class MPStatsScraperService:
             # 2. Поиск textarea
             logger.info("Поиск textarea...")
 
-            textarea = WebDriverWait(self.driver, 15).until(
-                EC.presence_of_element_located((By.TAG_NAME, "textarea"))
+            # textarea_tab = WebDriverWait(self.driver, 15).until(
+            #     EC.element_to_be_clickable((self.by_mapping[self.textarea_config["by"]],
+            #                                 self.textarea_config["value"]))
+            # )
+
+            textarea = self.driver.find_element(
+                self.by_mapping[self.textarea_config["by"]],
+                self.textarea_config["value"]
             )
 
             # 3. Формирование текста из параметров
@@ -309,31 +447,23 @@ class MPStatsScraperService:
             logger.info(f"Сформирован текст запроса: '{query_text}'")
 
             # 4. Заполнение textarea
-            textarea.clear()
-            time.sleep(random.uniform(0.5, 1))
 
-            # Имитация человеческого ввода
-            textarea.click()
-            time.sleep(random.uniform(0.3, 0.6))
+            textarea.send_keys(query_text)
 
-            # Вводим текст посимвольно с паузами
-            for char in query_text:
-                textarea.send_keys(char)
-                time.sleep(random.uniform(0.03, 0.08))
 
             logger.info("✅ Textarea заполнена")
+            time.sleep(3)
+            # 5. Нажимаем "Подобрать запросы"
+            element = self.driver.find_element(self.by_mapping[self.find_queries_btn_config["by"]],
+                                               self.find_queries_btn_config["value"])
+            # клик по кнопке игнорирую фокус
+            self.driver.execute_script("arguments[0].click();", element)
 
-            # 5. Нажимаем Tab и Enter для отправки формы
-            time.sleep(random.uniform(0.5, 1))
-            actions = ActionChains(self.driver)
-            actions.send_keys(Keys.TAB).perform()
-            time.sleep(random.uniform(0.2, 0.4))
-            actions.send_keys(Keys.ENTER).perform()
+            logger.info("✅ Форма отправлена (клик по кнопке 'Подобрать запросы')")
 
-            logger.info("✅ Форма отправлена (Tab+Enter)")
 
             # 6. Ждем некоторое время для обработки
-            time.sleep(random.uniform(3, 5))
+            time.sleep(20)
 
             return {
                 "success": True,
@@ -375,19 +505,40 @@ class MPStatsScraperService:
                 "clothing": "одежда",
                 "home": "дом и сад",
                 "beauty": "красота и здоровье",
-                "food": "продукты питания",
-                "books": "книги",
-                "sports": "спорт и отдых",
-                "toys": "игрушки",
-                "automotive": "автомобильные товары",
-                "health": "здоровье"
+                "decorative_panels": "декоративные панели",
+                "soft_panels": "мягкие панели",
+                "self_adhesive_wallpaper": "самоклеящиеся обои",
+                "pet_panels": "ПЭТ панели",
+                "baby_panels": "3D панели",
+                "aprons": "фартуки",
+                "3d_panels": "3D панели",
+                "battens": "реечные панели"
             }
             category_name = category_map.get(category, category)
             parts.append(category_name)
 
-        # 2. Назначение (очищаем от эмодзи)
+        # 2. Назначение (поддерживаем оба варианта: purpose и purposes)
+        purposes = params.get('purposes', [])
         purpose = params.get('purpose', '')
-        if purpose:
+
+        # Если есть purposes (массив), используем его
+        if purposes:
+            if isinstance(purposes, list):
+                for p in purposes[:3]:  # Берем максимум 3 назначения
+                    if p and isinstance(p, str):
+                        purpose_clean = self._clean_purpose_text(p)
+                        if purpose_clean:
+                            parts.append(purpose_clean)
+            else:
+                # Если это строка с разделителями
+                if isinstance(purposes, str):
+                    purpose_items = [p.strip() for p in purposes.split(',') if p.strip()]
+                    for p in purpose_items[:3]:
+                        purpose_clean = self._clean_purpose_text(p)
+                        if purpose_clean:
+                            parts.append(purpose_clean)
+        # Или используем старый формат purpose
+        elif purpose:
             purpose_clean = self._clean_purpose_text(purpose)
             if purpose_clean:
                 parts.append(purpose_clean)

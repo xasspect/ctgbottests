@@ -187,7 +187,7 @@ class KeywordsProcessor:
             self.logger.exception(f"Критическая ошибка при конвертации файла {excel_path}")
             raise
 
-    def create_enriched_json(self, excel_path: str, category: str, purpose: str,
+    def create_enriched_json(self, excel_path: str, category: str, purpose: Union[str, List[str]],
                              additional_params: List[str], json_path: Optional[str] = None) -> str:
         """
         Создает обогащенный JSON файл с 4 колонками:

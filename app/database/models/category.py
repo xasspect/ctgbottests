@@ -10,6 +10,7 @@ class Category(Base, BaseModel):
     id = Column(String, primary_key=True)  # Строковый ID категории
     name = Column(String(255), unique=True, nullable=False)
     description = Column(Text, nullable=True)
+    hidden_description = Column(String, nullable=True)
     system_prompt_filter = Column(Text, nullable=True)
     system_prompt_title = Column(Text, nullable=True)
     system_prompt_description = Column(Text, nullable=True)

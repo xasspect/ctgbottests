@@ -7,6 +7,7 @@ import asyncio
 import logging
 from app.config.config import config
 from app.bot.bot import ContentGeneratorBot
+from app.services.chrome_driver_updater import ChromeDriverUpdater
 from app.utils.logger import setup_logging
  
 
@@ -18,6 +19,7 @@ async def main():
     bot = ContentGeneratorBot(config)
 
     try:
+
         logger.info("Starting MPStats Content Generator Bot")
         await bot.initialize()
         await bot.run()
@@ -32,4 +34,6 @@ async def main():
 
 
 if __name__ == "__main__":
+    updater = ChromeDriverUpdater()
+    driver_path = updater.update_once()
     asyncio.run(main())

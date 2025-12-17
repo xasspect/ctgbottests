@@ -101,8 +101,18 @@ class ChromeDriverManager:
         """
         download_dir = download_dir or os.path.join(os.getcwd(), 'downloads')
         os.makedirs(download_dir, exist_ok=True)
+        self.last_download_dir = download_dir
+
+        import app
+        app_dir = os.path.dirname(os.path.dirname(app.__file__))
+        user_data_dir = os.path.join(app_dir, 'chrome_profile')
+        os.makedirs(user_data_dir, exist_ok=True)
+
+        logger.info(f"📁 Использую профиль Chrome: {user_data_dir}")
+        logger.info(f"📂 Директория для скачивания: {download_dir}")
 
         chrome_options = self._configure_chrome_options(
+            user_data_dir=user_data_dir,
             download_dir=download_dir,
             block_videos=block_videos,
             block_images=block_images,
@@ -124,6 +134,7 @@ class ChromeDriverManager:
     def _configure_chrome_options(
             self,
             download_dir: str,
+            user_data_dir: str,
             block_videos: bool,
             block_images: bool,
             block_sounds: bool,
@@ -139,6 +150,9 @@ class ChromeDriverManager:
             Настроенные ChromeOptions
         """
         chrome_options = ChromeOptions()
+
+        chrome_options.add_argument(f"user-data-dir={user_data_dir}")
+        # chrome_options.add_argument("profile-directory=Default")
 
         # Основные флаги для обхода детекции
         chrome_flags = [
@@ -301,13 +315,17 @@ class ChromeDriverManager:
     def _create_driver_with_options(self, chrome_options: ChromeOptions) -> webdriver.Chrome:
         """
         Создает драйвер с заданными опциями.
-
-        Returns:
-            Chrome WebDriver
         """
         try:
-            # Используем webdriver-manager для автоматической загрузки драйвера
-            service = ChromeService(WebDriverManager().install())
+            # Используем уже обновленный драйвер (не вызываем WebDriverManager.install())
+            from app.services.chrome_driver_updater import ChromeDriverUpdater
+
+            updater = ChromeDriverUpdater()
+            driver_path = updater.get_driver_path()
+
+            # Создаем сервис с явным путем к драйверу
+            service = ChromeService(executable_path=driver_path)
+
             driver = webdriver.Chrome(service=service, options=chrome_options)
 
             # Настраиваем DevTools

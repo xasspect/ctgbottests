@@ -102,22 +102,42 @@ class SessionRepository(BaseRepository[UserSession]):
 
             except Exception as e:
                 logger.error(f"❌ Ошибка очистки старых сессий: {e}")
+
+    # app/database/repositories/session_repo.py
+
     def create_new_session(self, user_id: int, **kwargs) -> UserSession:
         """Создать новую сессию (деактивируя старые)"""
         session = self.get_session()
         try:
-            # Деактивируем старые сессии
+            # 1. Сначала убедимся, что пользователь существует
+            # Импортируем UserRepository
+            from app.database.repositories.user_repo import UserRepository
+
+            user_repo = UserRepository()
+            user = user_repo.get_by_telegram_id(user_id)
+
+            if not user:
+                # Создаем пользователя, если его нет
+                user = user_repo.get_or_create(
+                    telegram_id=user_id,
+                    username=kwargs.get('username'),
+                    first_name=kwargs.get('first_name'),
+                    last_name=kwargs.get('last_name')
+                )
+                logger.info(f"✅ Создан новый пользователь: {user_id}")
+
+            # 2. Деактивируем старые активные сессии пользователя
             old_sessions = session.query(UserSession).filter(
-                UserSession.user_id == (user_id),
+                UserSession.user_id == user_id,  # Убираем str(), т.к. user_id в сессии тоже BigInteger
                 UserSession.is_active == True
             ).all()
 
             for old_session in old_sessions:
                 old_session.is_active = False
 
-            # Создаем новую сессию
+            # 3. Создаем новую сессию
             new_session = UserSession(
-                user_id=str(user_id),  # Преобразуем к строке
+                user_id=user_id,  # Убираем str(), передаем как int/BigInteger
                 is_active=True,
                 **kwargs
             )
@@ -128,6 +148,7 @@ class SessionRepository(BaseRepository[UserSession]):
 
             logger.info(f"✅ Создана новая сессия: ID={new_session.id}")
             return new_session
+
         except Exception as e:
             session.rollback()
             logger.error(f"❌ Ошибка создания сессии: {e}")

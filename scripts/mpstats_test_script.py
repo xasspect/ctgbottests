@@ -1,4 +1,5 @@
 # async_test.py
+from app.config.mpstats_ui_config import MPSTATS_UI_CONFIG
 import asyncio
 import os
 import sys
@@ -84,10 +85,29 @@ async def open_browser_and_test():
         # Импортируем необходимые модули
         from selenium.webdriver.common.by import By
 
+        email_config = MPSTATS_UI_CONFIG["login"]["email_field"]
+        password_config = MPSTATS_UI_CONFIG["login"]["password_field"]
+        requests_btn_config = MPSTATS_UI_CONFIG["tabs"]["requests"]
+        words_config = MPSTATS_UI_CONFIG["tabs"]["words"]
+        textarea_config = MPSTATS_UI_CONFIG["forms"]["textarea"]
+        find_queries_btn_config = MPSTATS_UI_CONFIG["forms"]["find_queries_btn"]
+        downloads_config = MPSTATS_UI_CONFIG["download"]["download_btn"]
+
+        by_mapping = {
+            "NAME": By.NAME,
+            "ID": By.ID,
+            "XPATH": By.XPATH,
+            "CLASS_NAME": By.CLASS_NAME,
+            "CSS_SELECTOR": By.CSS_SELECTOR,
+            "TAG_NAME": By.TAG_NAME,
+            "LINK_TEXT": By.LINK_TEXT,
+            "PARTIAL_LINK_TEXT": By.PARTIAL_LINK_TEXT
+        }
+
         try:
-            email = driver.find_element(By.NAME, 'mpstats-login-form-name')
+            email = driver.find_element(by_mapping[email_config["by"]], email_config["value"])
             email.send_keys(config.api.mpstats_email)
-            pswd = driver.find_element(By.NAME, 'mpstats-login-form-password')
+            pswd = driver.find_element(by_mapping[password_config["by"]], password_config["value"])
             pswd.send_keys(config.api.mpstats_pswd)
             pswd.send_keys(Keys.ENTER)
 
@@ -98,47 +118,55 @@ async def open_browser_and_test():
         """
         Поиск кнопки "Запросы" по классу кнопок в bar (class="pqQVD")
         """
-
+        #requests btn + ожидание
         try:
-
-            while len(driver.find_elements(By.XPATH, "//*[contains(@class, 'pqQVD')]")) == 0:
+            while len(driver.find_elements(by_mapping[requests_btn_config["by"]], requests_btn_config["value"])) == 0:
                 print(123)
                 sleep(1)
-            elements = driver.find_elements(By.XPATH, "//*[contains(@class, 'pqQVD')]")
+            elements = driver.find_elements(by_mapping[requests_btn_config["by"]], requests_btn_config["value"])
             elements[1].click()
         except Exception as e:
             print(f'Ошибка Запросы: "{e}"')
 
+        #textarea
         try:
-            textarea = driver.find_element(By.TAG_NAME, "textarea")
+            textarea = driver.find_element(by_mapping[textarea_config["by"]], textarea_config["value"])
             textarea.send_keys('пергамент для выпечки')
         except Exception as e:
             print(f'Ошибка textarea: "{e}"')
 
+        #Подобрать запросы btn
         try:
-            element = driver.find_element(By.CSS_SELECTOR, ".whAjj.M_JA1")
+            element = driver.find_element(by_mapping[find_queries_btn_config["by"]], find_queries_btn_config["value"])
+            #клик по кнопке игнорирую фокус
             driver.execute_script("arguments[0].click();", element)
         except Exception as e:
             print(f'Ошибка "Подобрать запросы": {e}')
+
         sleep(4)
+
+        #Переключиться на слова btn
         try:
-            while len(driver.find_elements(By.XPATH, "//*[contains(@class, 'pqQVD')]")) == 0:
+            while len(driver.find_elements(by_mapping[words_config["by"]], words_config["value"])) == 0:
                 print(123)
                 sleep(1)
-            elements = driver.find_elements(By.XPATH, "//*[contains(@class, 'pqQVD')]")
+            elements = driver.find_elements(by_mapping[words_config["by"]], words_config["value"])
             elements[1].click()
         except Exception as e:
             print(f'Ошибка "Переключиться на слова": {e}')
 
         sleep(2)
+        # Скачать 1 btn
         try:
-            elements = driver.find_elements(By.CSS_SELECTOR, ".whAjj.M_JA1")
+            elements = driver.find_elements(by_mapping[downloads_config["by"]], downloads_config["value"])
+            #Клик по 1 кнопке скачать из списка элементов по классу (1 в списке DOM по фильтру класса)
             driver.execute_script("arguments[0].click();", elements[0])
         except Exception as e:
             print(f'Ошибка "Скачать 1": {e}')
         sleep(2)
         try:
-            elements = driver.find_elements(By.CSS_SELECTOR, ".whAjj.M_JA1")
+            elements = driver.find_elements(by_mapping[downloads_config["by"]], downloads_config["value"])
+            # Клик по 2 кнопке скачать из списка элементов по классу (3 в списке DOM по фильтру класса)
             driver.execute_script("arguments[0].click();", elements[2])
         except Exception as e:
             print(f'Ошибка "Скачать 2": {e}')
@@ -191,10 +219,11 @@ async def open_browser_and_test():
         downloaded = wait_for_download_complete(downloads_dir, timeout=60)
         if downloaded:
             print(f"✅ Скачивание успешно: {len(downloaded)} файлов")
+            # driver.quit()
         else:
             print("❌ Скачивание не завершено")
 
-        await asyncio.sleep(999)
+
 
         return driver
 

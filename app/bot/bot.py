@@ -10,6 +10,7 @@ from app.bot.handlers.category_handler import CategoryHandler
 from app.bot.handlers.generation_handler import GenerationHandler
 from app.bot.handlers.admin_handler import AdminHandler
 from app.bot.handlers.session_handler import SessionHandler
+from app.services import MPStatsService
 
 
 class ContentGeneratorBot:
@@ -73,19 +74,26 @@ class ContentGeneratorBot:
         from app.services.openai_service import OpenAIService
         from app.services.content_service import ContentService
         from app.services.prompt_service import PromptService
-
+        from app.services.mpstats_scraper_service import MPStatsScraperService
+        from app.services.data_collection_service import DataCollectionService
         try:
             openai_service = OpenAIService()
-            content_service = ContentService(None, openai_service)
+            mpstats_service = MPStatsService()
+            content_service = ContentService(mpstats_service, openai_service)
             prompt_service = PromptService()
+            scraper_service = MPStatsScraperService(self.config)
+            data_collection_service = DataCollectionService(self.config, scraper_service)
 
             self.services = {
                 'openai': openai_service,
+                'mpstats': mpstats_service,
                 'content': content_service,
-                'prompt': prompt_service
+                'prompt': prompt_service,
+                'scraper': scraper_service,
+                'data_collection': data_collection_service,
             }
 
-            self.logger.info("✅ Services initialized")
+            self.logger.info("✅ Все сервисы инициализированы")
             self.logger.info(f"Available services: {list(self.services.keys())}")
 
         except Exception as e:
@@ -116,6 +124,7 @@ class ContentGeneratorBot:
             GenerationHandler(self.config, self.services, self.repositories),
             SessionHandler(self.config, self.services, self.repositories),
             AdminHandler(self.config, self.services, self.repositories),
+
         ]
 
         for handler in self.handlers:

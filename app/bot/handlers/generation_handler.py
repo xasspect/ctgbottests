@@ -20,7 +20,7 @@ class GenerationHandler(BaseMessageHandler):
         self.router.callback_query.register(self.handle_generate_title, F.data == "generate_title")
         self.router.callback_query.register(self.handle_regenerate_title, F.data == "regenerate_title")
         self.router.callback_query.register(self.handle_approve_title, F.data.startswith("approve_title_"))
-        self.router.callback_query.register(self.handle_back_to_title, F.data == "back_to_title")  # Добавлено
+        self.router.callback_query.register(self.handle_back_to_title, F.data == "back_to_title")
         self.router.callback_query.register(self.handle_generate_short_desc, F.data.startswith("generate_short_"))
         self.router.callback_query.register(self.handle_generate_long_desc, F.data.startswith("generate_long_"))
         self.router.callback_query.register(self.handle_generate_both_desc, F.data.startswith("generate_both_"))
@@ -28,6 +28,116 @@ class GenerationHandler(BaseMessageHandler):
         self.router.callback_query.register(self.handle_regenerate_description, F.data.startswith("regenerate_desc_"))
         self.router.message.register(self.show_generate_options, Command(commands=["generate"]))
         self.router.callback_query.register(self.handle_back_to_menu, F.data == "back_to_menu_from_generation")
+        self.router.callback_query.register(self.handle_collect_data, F.data.startswith("collect_data_"))
+
+    async def handle_collect_data(self, callback: CallbackQuery):
+        """Обработка нажатия кнопки 'Собрать данные'"""
+        session_id = callback.data.replace("collect_data_", "")
+
+        if 'session_repo' not in self.repositories:
+            await callback.answer("❌ Репозитории не инициализированы")
+            return
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_by_id(session_id)
+
+        if not session:
+            await callback.answer("❌ Сессия не найдена")
+            return
+
+        # Показываем сообщение о начале сбора
+        await callback.message.edit_text(
+            "🔍 <b>Начинаю сбор данных с MPStats...</b>\n\n⏳ Это может занять 1-2 минуты...")
+
+        try:
+            # Получаем сервис сбора данных
+            data_collection_service = self.services.get('data_collection')
+
+            if not data_collection_service:
+                # Создаем сервис при необходимости
+                from app.services.data_collection_service import DataCollectionService
+                from app.services.mpstats_scraper_service import MPStatsScraperService
+
+                scraper_service = MPStatsScraperService(self.config)
+                data_collection_service = DataCollectionService(self.config, scraper_service)
+                self.services['data_collection'] = data_collection_service
+
+            # Получаем категорию по ID
+            category_repo = self.repositories['category_repo']
+            category = category_repo.get_by_id(session.category_id)
+
+            if not category:
+                await callback.message.edit_text("❌ Категория не найдена")
+                return
+
+            # Запускаем сбор данных (теперь передаем массив purposes)
+            result = await data_collection_service.collect_keywords_data(
+                category=category.name,
+                purpose=session.purposes if hasattr(session, 'purposes') and session.purposes else [],
+                # Передаем массив
+                additional_params=session.additional_params or []
+            )
+
+            if result.get("status") == "success":
+                # Обновляем сессию с ключевыми словами
+                session.keywords = result.get("keywords", [])
+                session.current_step = "data_collected"
+                session_repo.update(
+                    session.id,
+                    keywords=result.get("keywords", []),
+                    current_step="data_collected"
+                )
+
+                # Формируем сообщение с результатами
+                message_text = (
+                    f"✅ <b>Данные собраны успешно!</b>\n\n"
+                    f"📁 <b>Категория:</b> {result['category']}\n"
+                )
+
+                # Показываем назначения как массив
+                if result.get('purposes'):
+                    purposes_list = result['purposes']
+                    if isinstance(purposes_list, list) and purposes_list:
+                        message_text += f"🎯 <b>Назначения:</b> {', '.join(purposes_list)}\n"
+                    elif purposes_list:
+                        message_text += f"🎯 <b>Назначение:</b> {purposes_list}\n"
+
+                if result['additional_params']:
+                    message_text += f"📝 <b>Доп. параметры:</b> {', '.join(result['additional_params'])}\n\n"
+                else:
+                    message_text += f"📝 <b>Доп. параметры:</b> не указаны\n\n"
+
+                # Добавляем ключевые слова (первые 15)
+                keywords_preview = result.get("keywords", [])[:15]
+                if keywords_preview:
+                    message_text += (
+                        f"🔑 <b>Ключевые слова (первые 15):</b>\n"
+                        f"{', '.join(keywords_preview)}\n\n"
+                        f"<i>Всего собрано {len(result['keywords'])} ключевых слов</i>"
+                    )
+
+                # Кнопки для продолжения
+                builder = InlineKeyboardBuilder()
+                builder.button(text="🚀 Сгенерировать заголовок", callback_data=f"generate_title_advanced_{session.id}")
+                builder.button(text="↩️ Изменить параметры", callback_data="change_params")
+                builder.adjust(1)
+
+                await callback.message.edit_text(message_text, reply_markup=builder.as_markup())
+
+            else:
+                # Ошибка
+                await callback.message.edit_text(
+                    f"❌ <b>Ошибка при сборе данных:</b>\n{result.get('message', 'Неизвестная ошибка')}"
+                )
+
+        except Exception as e:
+            self.logger.error(f"Ошибка сбора данных: {e}", exc_info=True)
+            await callback.message.edit_text(
+                f"❌ <b>Ошибка при сборе данных:</b>\n{str(e)[:200]}"
+            )
+
+        await callback.answer()
+
     async def _generate_title_simple(self, callback: CallbackQuery, session):
         """Простая генерация заголовка через OpenAI"""
         user_id = callback.from_user.id
@@ -53,25 +163,37 @@ class GenerationHandler(BaseMessageHandler):
 
             # Используем PromptService для получения промптов
             prompt_service = self.services.get('prompt')
+
+            # ИЗМЕНЕНО: обрабатываем как массив purposes
+            purposes_text = ""
+            if hasattr(session, 'purposes') and session.purposes:
+                if isinstance(session.purposes, list):
+                    purposes_text = ", ".join(session.purposes)
+                else:
+                    purposes_text = str(session.purposes)
+            elif hasattr(session, 'purpose'):
+                purposes_text = session.purpose
+
             if not prompt_service:
                 user_prompt = f"""
                 Создай продающий заголовок для товара на маркетплейсе со следующими параметрами:
 
                 Категория: {category.name}
-                Назначение товара: {session.purpose}
+                Назначения товара: {purposes_text}
                 Дополнительные параметры: {', '.join(session.additional_params) if session.additional_params else 'нет'}
 
                 Требования к заголовку:
                 1. Максимально продающий и привлекательный
                 2. Включает основные преимущества товара
                 3. Соответствует категории "{category.name}"
-                4. Оптимизирован для поиска на маркетплейсе
-                5. Длина от 5 до 10 слов
-                6. Не используй HTML теги
-                7. Пиши на русском языке
-                8. Не используй специальные символы "!, :, ^, )" и т.д.
-                9. Дополнительные параметры должны привлекательно встраиваться в заголовок
-                10. Ты создаешь заголовок в карточке товара на маркетплейсе
+                4. Учитывает все назначения: {purposes_text}
+                5. Оптимизирован для поиска на маркетплейсе
+                6. Длина от 5 до 10 слов
+                7. Не используй HTML теги
+                8. Пиши на русском языке
+                9. Не используй специальные символы "!, :, ^, )" и т.д.
+                10. Дополнительные параметры должны привлекательно встраиваться в заголовок
+                11. Ты создаешь заголовок в карточке товара на маркетплейсе
                 """
                 system_prompt = """
                 Ты профессиональный копирайтер для маркетплейсов Wildberries и OZON.
@@ -80,7 +202,7 @@ class GenerationHandler(BaseMessageHandler):
             else:
                 user_prompt = prompt_service.get_title_prompt(
                     category.name,
-                    session.purpose,
+                    purposes_text,
                     session.additional_params if session.additional_params else []
                 )
                 system_prompt = prompt_service.get_system_prompt_for_title()
@@ -107,7 +229,7 @@ class GenerationHandler(BaseMessageHandler):
                 generated_title = generated_title.replace("Заголовок:", "").strip()
 
             if len(generated_title) < 10:
-                generated_title = f"{category.name} {session.purpose} - {generated_title}"
+                generated_title = f"{category.name} {purposes_text} - {generated_title}"
 
             self.logger.info(f"✅ Сгенерирован заголовок: {generated_title}")
 
@@ -131,7 +253,7 @@ class GenerationHandler(BaseMessageHandler):
             text += f"<code>{generated_title}</code>\n\n"
             text += f"📋 <b>Параметры товара:</b>\n"
             text += f"• <b>Категория:</b> {category.name}\n"
-            text += f"• <b>Назначение:</b> {session.purpose}\n"
+            text += f"• <b>Назначения:</b> {purposes_text}\n"  # ИЗМЕНЕНО
 
             if session.additional_params:
                 text += f"• <b>Доп. параметры:</b> {', '.join(session.additional_params)}\n"
@@ -178,6 +300,16 @@ class GenerationHandler(BaseMessageHandler):
             await callback.answer("❌ Сессия не найдена")
             return
 
+        # ИЗМЕНЕНО: получаем назначения
+        purposes_text = ""
+        if hasattr(session, 'purposes') and session.purposes:
+            if isinstance(session.purposes, list):
+                purposes_text = ", ".join(session.purposes)
+            else:
+                purposes_text = str(session.purposes)
+        elif hasattr(session, 'purpose'):
+            purposes_text = session.purpose
+
         # Обновляем шаг сессии
         session.current_step = "title_approved"
         session_repo.update(session.id, current_step="title_approved")
@@ -193,7 +325,7 @@ class GenerationHandler(BaseMessageHandler):
                 long_description="",
                 keywords=session.keywords if session.keywords else [],
                 category_id=session.category_id,
-                purpose=session.purpose
+                purpose=purposes_text  # ИЗМЕНЕНО
             )
 
         # Показываем варианты генерации описаний с кнопкой Назад
@@ -201,7 +333,7 @@ class GenerationHandler(BaseMessageHandler):
         builder.button(text="📋 Краткое описание", callback_data=f"generate_short_{session.id}")
         builder.button(text="📖 Подробное описание", callback_data=f"generate_long_{session.id}")
         builder.button(text="⚡ Оба описания", callback_data=f"generate_both_{session.id}")
-        builder.button(text="↩️ Назад к заголовку", callback_data="back_to_title")  # Кнопка Назад
+        builder.button(text="↩️ Назад к заголовку", callback_data="back_to_title")
         builder.adjust(1)
 
         await callback.message.edit_text(
@@ -230,6 +362,16 @@ class GenerationHandler(BaseMessageHandler):
         category_repo = self.repositories['category_repo']
         category = category_repo.get_by_id(session.category_id)
 
+        # ИЗМЕНЕНО: получаем назначения
+        purposes_text = ""
+        if hasattr(session, 'purposes') and session.purposes:
+            if isinstance(session.purposes, list):
+                purposes_text = ", ".join(session.purposes)
+            else:
+                purposes_text = str(session.purposes)
+        elif hasattr(session, 'purpose'):
+            purposes_text = session.purpose
+
         builder = InlineKeyboardBuilder()
         builder.button(text="✅ Принять", callback_data=f"approve_title_{session.id}")
         builder.button(text="🔄 Перегенерировать", callback_data="regenerate_title")
@@ -241,7 +383,7 @@ class GenerationHandler(BaseMessageHandler):
         text += f"📋 <b>Параметры товара:</b>\n"
         if category:
             text += f"• <b>Категория:</b> {category.name}\n"
-        text += f"• <b>Назначение:</b> {session.purpose}\n"
+        text += f"• <b>Назначения:</b> {purposes_text}\n"  # ИЗМЕНЕНО
 
         if session.additional_params:
             text += f"• <b>Доп. параметры:</b> {', '.join(session.additional_params)}\n"
@@ -570,11 +712,21 @@ class GenerationHandler(BaseMessageHandler):
                 await message.answer("❌ Сервис OpenAI не инициализирован")
                 return
 
+            # ИЗМЕНЕНО: получаем назначения
+            purposes_text = ""
+            if hasattr(session, 'purposes') and session.purposes:
+                if isinstance(session.purposes, list):
+                    purposes_text = ", ".join(session.purposes)
+                else:
+                    purposes_text = str(session.purposes)
+            elif hasattr(session, 'purpose'):
+                purposes_text = session.purpose
+
             prompt_service = self.services.get('prompt')
             if prompt_service:
                 user_prompt = prompt_service.get_title_prompt(
                     category.name,
-                    session.purpose,
+                    purposes_text,
                     session.additional_params if session.additional_params else []
                 )
                 system_prompt = prompt_service.get_system_prompt_for_title()
@@ -583,20 +735,21 @@ class GenerationHandler(BaseMessageHandler):
                 Создай продающий заголовок для товара на маркетплейсе со следующими параметрами:
 
                 Категория: {category.name}
-                Назначение товара: {session.purpose}
+                Назначения товара: {purposes_text}
                 Дополнительные параметры: {', '.join(session.additional_params) if session.additional_params else 'нет'}
 
                 Требования к заголовку:
                 1. Максимально продающий и привлекательный
                 2. Включает основные преимущества товара
                 3. Соответствует категории "{category.name}"
-                4. Оптимизирован для поиска на маркетплейсе
-                5. Длина от 5 до 10 слов
-                6. Не используй HTML теги
-                7. Пиши на русском языке
-                8. Не используй специальные символы "!, :, ^, )" и т.д.
-                9. Дополнительные параметры должны привлекательно встраиваться в заголовок
-                10. Ты создаешь заголовок в карточке товара на маркетплейсе
+                4. Учитывает все назначения: {purposes_text}
+                5. Оптимизирован для поиска на маркетплейсе
+                6. Длина от 5 до 10 слов
+                7. Не используй HTML теги
+                8. Пиши на русском языке
+                9. Не используй специальные символы "!, :, ^, )" и т.д.
+                10. Дополнительные параметры должны привлекательно встраиваться в заголовок
+                11. Ты создаешь заголовок в карточке товара на маркетплейсе
                 """
                 system_prompt = """
                 Ты профессиональный копирайтер для маркетплейсов Wildberries и OZON.
@@ -642,7 +795,7 @@ class GenerationHandler(BaseMessageHandler):
             text += f"<code>{generated_title}</code>\n\n"
             text += f"📋 <b>Параметры товара:</b>\n"
             text += f"• <b>Категория:</b> {category.name}\n"
-            text += f"• <b>Назначение:</b> {session.purpose}\n"
+            text += f"• <b>Назначения:</b> {purposes_text}\n"  # ИЗМЕНЕНО
 
             if session.additional_params:
                 text += f"• <b>Доп. параметры:</b> {', '.join(session.additional_params)}\n"
