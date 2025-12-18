@@ -99,21 +99,33 @@ class ChromeDriverManager:
         Returns:
             Настроенный Chrome WebDriver
         """
-        download_dir = download_dir or os.path.join(os.getcwd(), 'downloads')
-        os.makedirs(download_dir, exist_ok=True)
-        self.last_download_dir = download_dir
-
+        # ИСПРАВЛЕНО: Используем абсолютный путь для скачивания
         import app
         app_dir = os.path.dirname(os.path.dirname(app.__file__))
+
+        # Явно устанавливаем путь для скачивания
+        if download_dir:
+            download_dir = os.path.join(app_dir, download_dir)
+        else:
+            download_dir = os.path.join(app_dir, 'downloads/mpstats')
+
+        # Гарантируем, что директория существует
+        os.makedirs(download_dir, exist_ok=True)
+
+        # СОХРАНЯЕМ путь в атрибуте класса
+        self.download_dir = download_dir
+        self.last_download_dir = download_dir  # Для совместимости
+
+        # Путь для профиля Chrome
         user_data_dir = os.path.join(app_dir, 'chrome_profile')
         os.makedirs(user_data_dir, exist_ok=True)
 
         logger.info(f"📁 Использую профиль Chrome: {user_data_dir}")
-        logger.info(f"📂 Директория для скачивания: {download_dir}")
+        logger.info(f"📂 Директория для скачивания: {download_dir} (абсолютный путь)")
 
         chrome_options = self._configure_chrome_options(
             user_data_dir=user_data_dir,
-            download_dir=download_dir,
+            download_dir=download_dir,  # Передаем абсолютный путь
             block_videos=block_videos,
             block_images=block_images,
             block_sounds=block_sounds,
@@ -152,7 +164,6 @@ class ChromeDriverManager:
         chrome_options = ChromeOptions()
 
         chrome_options.add_argument(f"user-data-dir={user_data_dir}")
-        # chrome_options.add_argument("profile-directory=Default")
 
         # Основные флаги для обхода детекции
         chrome_flags = [
@@ -163,7 +174,7 @@ class ChromeDriverManager:
 
             # Флаги для обхода детекции автоматизации
             "--disable-blink-features=AutomationControlled",
-            "--disable-features=IsolateOrigins,site-per-process",  # Важно для stealth
+            "--disable-features=IsolateOrigins,site-per-process",
             "--disable-web-security",
             "--allow-running-insecure-content",
 
@@ -180,7 +191,6 @@ class ChromeDriverManager:
             "--disable-prompt-on-repost",
             "--disable-domain-reliability",
             "--disable-renderer-backgrounding",
-            "--disable-background-timer-throttling",
             "--disable-backgrounding-occluded-windows",
             "--disable-ipc-flooding-protection",
             "--disable-notifications",
@@ -261,6 +271,9 @@ class ChromeDriverManager:
             "profile.default_content_settings.popups": 0,
             "profile.default_content_setting_values.automatic_downloads": 1,
             "profile.default_content_setting_values.notifications": 2,
+
+            # Важно: отключаем предложение "Сохранить как..."
+            "profile.content_settings.pattern_pairs.*.multiple-automatic-downloads": 1,
 
             # Настройки для обхода детекции
             "credentials_enable_service": False,

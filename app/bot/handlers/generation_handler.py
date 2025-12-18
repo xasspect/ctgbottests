@@ -33,6 +33,7 @@ class GenerationHandler(BaseMessageHandler):
     async def handle_collect_data(self, callback: CallbackQuery):
         """Обработка нажатия кнопки 'Собрать данные'"""
         session_id = callback.data.replace("collect_data_", "")
+        await callback.answer("✅ Начинаю сбор данных...")  # ОТВЕЧАЕМ СРАЗУ ЖЕ!
 
         if 'session_repo' not in self.repositories:
             await callback.answer("❌ Репозитории не инициализированы")
@@ -46,8 +47,9 @@ class GenerationHandler(BaseMessageHandler):
             return
 
         # Показываем сообщение о начале сбора
-        await callback.message.edit_text(
-            "🔍 <b>Начинаю сбор данных с MPStats...</b>\n\n⏳ Это может занять 1-2 минуты...")
+        status_message = await callback.message.answer(
+            "🔍 <b>Начинаю сбор данных с MPStats...</b>\n\n⏳ Это может занять 1-2 минуты..."
+        )
 
         try:
             # Получаем сервис сбора данных
@@ -67,7 +69,7 @@ class GenerationHandler(BaseMessageHandler):
             category = category_repo.get_by_id(session.category_id)
 
             if not category:
-                await callback.message.edit_text("❌ Категория не найдена")
+                await status_message.edit_text("❌ Категория не найдена")
                 return
 
             # Запускаем сбор данных (теперь передаем массив purposes)
@@ -122,21 +124,18 @@ class GenerationHandler(BaseMessageHandler):
                 builder.button(text="↩️ Изменить параметры", callback_data="change_params")
                 builder.adjust(1)
 
-                await callback.message.edit_text(message_text, reply_markup=builder.as_markup())
+                await status_message.edit_text(message_text, reply_markup=builder.as_markup())
 
             else:
                 # Ошибка
-                await callback.message.edit_text(
+                await status_message.edit_text(
                     f"❌ <b>Ошибка при сборе данных:</b>\n{result.get('message', 'Неизвестная ошибка')}"
                 )
 
         except Exception as e:
+            await status_message.edit_text(f"❌ <b>Ошибка при сборе данных:</b>\n{str(e)[:200]}")
             self.logger.error(f"Ошибка сбора данных: {e}", exc_info=True)
-            await callback.message.edit_text(
-                f"❌ <b>Ошибка при сборе данных:</b>\n{str(e)[:200]}"
-            )
 
-        await callback.answer()
 
     async def _generate_title_simple(self, callback: CallbackQuery, session):
         """Простая генерация заголовка через OpenAI"""

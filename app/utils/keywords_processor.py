@@ -4,6 +4,7 @@ import pandas as pd
 from typing import Dict, Any, Optional, List, Union
 from pathlib import Path
 import logging
+import re #ХАХАХАХАХАХХАХАХАХАХАХАХАХАХАХХАХАААХАХХАХАХААХААХААХААХА
 
 logger = logging.getLogger(__name__)
 
@@ -37,211 +38,247 @@ class KeywordsProcessor:
 
     def extract_keywords_from_sheet(self, df: pd.DataFrame, sheet_name: str) -> List[str]:
         """
-        Извлекает уникальные ключевые слова из целевого столбца
-
-        Args:
-            df: DataFrame с данными
-            sheet_name: Имя листа
-
-        Returns:
-            Список уникальных ключевых слов
+        Извлекает уникальные ключевые слова из ПЕРВОГО столбца таблицы
+        Игнорирует цифры и технические данные
         """
         keywords = []
 
         try:
-            # Проверяем наличие целевого столбца
-            if self.target_column not in df.columns:
-                self.logger.warning(
-                    f"Столбец '{self.target_column}' не найден в листе '{sheet_name}'. Доступные столбцы: {list(df.columns)}")
-                return keywords
+            self.logger.info("=" * 60)
+            self.logger.info(f"📊 ЛИСТ: '{sheet_name}'")
+            self.logger.info(f"📊 Размер: {df.shape[0]} строк, {df.shape[1]} столбцов")
+            self.logger.info(f"📊 Все столбцы: {list(df.columns)}")
 
+            # 1. Берем ПЕРВЫЙ столбец (индекс 0) - это столбец "Слова"
+            first_column_name = df.columns[0]
+            self.logger.info(f"✅ Использую ПЕРВЫЙ столбец: '{first_column_name}'")
 
-            # Извлекаем значения из столбца
-            column_values = df[self.target_column].dropna().astype(str).str.strip()
+            # 2. Извлекаем значения из первого столбца
+            column_values = df.iloc[:, 0].dropna().astype(str).str.strip()
+            self.logger.info(f"📊 Найдено значений в первом столбце: {len(column_values)}")
 
-            # Удаляем дубликаты и пустые строки
-            unique_keywords = list(set([word for word in column_values if word]))
+            # 3. Показываем примеры для отладки
+            if len(column_values) > 0:
+                sample_values = column_values.head(15).tolist()
+                self.logger.info(f"📊 Примеры из первого столбца (первые 15):")
+                for i, val in enumerate(sample_values):
+                    self.logger.info(f"  {i + 1}. '{val}'")
 
-            self.logger.info(f"Из листа '{sheet_name}' извлечено {len(unique_keywords)} уникальных ключевых слов")
+            # 4. ФИЛЬТРАЦИЯ: удаляем цифры, технические данные и не-слова
+            filtered_keywords = []
+
+            for word in column_values:
+                word_str = str(word).strip()
+
+                # ИГНОРИРУЕМ:
+                # 1. Чистые цифры (2020, 30, 5055 и т.д.)
+                if word_str.isdigit():
+                    continue
+
+                # 2. Цифры с суффиксами (20201000, 60шт, 70х77)
+                if re.match(r'^\d+[штх\.,]?\d*$', word_str):
+                    continue
+
+                # 3. Слишком короткие слова (меньше 2 букв)
+                # Сначала удаляем все не-буквы для проверки длины
+                letters_only = re.sub(r'[^а-яА-Яa-zA-Z]', '', word_str)
+                if len(letters_only) < 2:
+                    continue
+
+                # 4. Технические коды (только цифры и символы)
+                if not any(c.isalpha() for c in word_str):
+                    continue
+
+                # 5. Проверяем, что есть хотя бы одна русская буква
+                if not re.search(r'[а-яА-Я]', word_str):
+                    continue
+
+                # Если слово прошло все фильтры - добавляем
+                filtered_keywords.append(word_str)
+
+            # 5. Удаляем дубликаты
+            unique_keywords = list(set(filtered_keywords))
+            unique_keywords.sort()  # Сортируем для удобства
+
+            self.logger.info(f"📊 После фильтрации:")
+            self.logger.info(f"  - Исходно: {len(column_values)} значений")
+            self.logger.info(f"  - После фильтрации: {len(filtered_keywords)}")
+            self.logger.info(f"  - Уникальных: {len(unique_keywords)}")
+
+            # 6. Показываем результат фильтрации
+            if unique_keywords:
+                self.logger.info(f"📊 Результат фильтрации (первые 20):")
+                for i, word in enumerate(unique_keywords[:20]):
+                    self.logger.info(f"  {i + 1}. '{word}'")
+
+            self.logger.info("=" * 60)
 
             return unique_keywords
 
         except Exception as e:
-            self.logger.error(f"Ошибка при извлечении ключевых слов из листа '{sheet_name}': {str(e)}")
+            self.logger.error(f"❌ Ошибка при извлечении ключевых слов из листа '{sheet_name}': {str(e)}")
+            self.logger.exception("Подробности ошибки:")
             return keywords
 
     def convert_xlsx_to_json(self, excel_path: str, json_path: Optional[str] = None) -> str:
         """
         Конвертирует Excel файл в JSON с ключевыми словами
-
-        Args:
-            excel_path: Путь к исходному Excel файлу
-            json_path: Путь для сохранения JSON файла
-
-        Returns:
-            Путь к созданному JSON файлу
+        ТОЛЬКО из первого столбца, с фильтрацией
         """
-        self.logger.info(f"Конвертация файла: {excel_path}")
-        self.logger.info(f"Целевой столбец для извлечения: '{self.target_column}'")
+        self.logger.info(f"📂 Конвертация файла: {excel_path}")
+        self.logger.info(f"🎯 Стратегия: БЕРУ ТОЛЬКО ПЕРВЫЙ СТОЛБЕЦ, фильтрую цифры и мусор")
 
         try:
-            # Проверка существования файла
+            # Проверяем файл
             if not os.path.exists(excel_path):
-                error_msg = f"Файл не найден: {excel_path}"
-                self.logger.error(error_msg)
-                raise FileNotFoundError(error_msg)
+                raise FileNotFoundError(f"Файл не найден: {excel_path}")
 
-            self.logger.debug(f"Файл существует, размер: {os.path.getsize(excel_path)} байт")
+            file_size = os.path.getsize(excel_path)
+            self.logger.info(f"📏 Размер файла: {file_size} байт")
 
-            # Загрузка Excel файла
-            self.logger.info(f"Загрузка Excel файла: {excel_path}")
-            if json_path is None:
-                base_name = Path(excel_path).stem
-                # Сохраняем в папке keywords, а не в той же папке
-                json_path = os.path.join(self.keywords_dir, f"{base_name}.json")
-                self.logger.debug(f"Путь JSON не указан, сгенерирован: {json_path}")
-            self.logger.info(f"Сохранение JSON в файл: {json_path}")
+            # Загружаем Excel файл
+            excel_data = pd.read_excel(excel_path, sheet_name=None)
+            sheet_names = list(excel_data.keys())
+            self.logger.info(f"📑 Листы в файле: {sheet_names}")
 
-
-            try:
-                excel_data = pd.read_excel(excel_path, sheet_name=None)
-                sheet_names = list(excel_data.keys())
-                self.logger.info(f"Файл загружен. Листы: {sheet_names}")
-                self.logger.debug(f"Количество листов: {len(sheet_names)}")
-
-            except Exception as e:
-                error_msg = f"Ошибка загрузки Excel файла: {str(e)}"
-                self.logger.error(error_msg)
-                self.logger.exception("Подробности ошибки:")
-                raise ValueError(error_msg) from e
-
-            # Извлечение ключевых слов из всех листов
-            self.logger.info(f"Извлечение ключевых слов из столбца '{self.target_column}'...")
             all_keywords = []
 
             for sheet_name, df in excel_data.items():
-                self.logger.debug(f"Обработка листа: {sheet_name}")
-                self.logger.debug(f"Размер листа {sheet_name}: {df.shape[0]} строк, {df.shape[1]} столбцов")
+                self.logger.info(f"📊 Лист '{sheet_name}': {df.shape[0]} строк, {df.shape[1]} столбцов")
+                self.logger.info(f"📊 Столбцы: {list(df.columns)}")
 
+                # Показываем первые 3 строки первого столбца для отладки
+                if len(df) > 0:
+                    self.logger.info(f"📊 Первые 5 строк ПЕРВОГО столбца:")
+                    for i in range(min(5, len(df))):
+                        first_col_value = str(df.iloc[i, 0]) if pd.notna(df.iloc[i, 0]) else "ПУСТО"
+                        self.logger.info(f"  Строка {i}: '{first_col_value}'")
+
+                # Извлекаем ключевые слова из этого листа
                 sheet_keywords = self.extract_keywords_from_sheet(df, sheet_name)
                 all_keywords.extend(sheet_keywords)
 
             # Удаляем дубликаты на уровне всего файла
             unique_keywords = list(set(all_keywords))
-            self.logger.info(f"Всего извлечено {len(all_keywords)} ключевых слов, уникальных: {len(unique_keywords)}")
+            self.logger.info(f"📊 ИТОГО по всем листам:")
+            self.logger.info(f"  - Собрано: {len(all_keywords)} ключевых слов")
+            self.logger.info(f"  - Уникальных: {len(unique_keywords)}")
 
-            # Сортировка для удобства (опционально)
+            # Сортировка для удобства
             unique_keywords.sort()
 
-            # Подготовка JSON данных (базовый формат)
+            # Ограничиваем количество (если нужно)
+            max_keywords = 200
+            if len(unique_keywords) > max_keywords:
+                self.logger.info(f"📊 Ограничиваю до {max_keywords} ключевых слов")
+                unique_keywords = unique_keywords[:max_keywords]
+
+            # Показываем окончательный результат
+            self.logger.info(f"📊 ФИНАЛЬНЫЙ результат (первые 30):")
+            for i, word in enumerate(unique_keywords[:30]):
+                self.logger.info(f"  {i + 1}. '{word}'")
+
+            # Подготовка JSON данных
             json_data = {
                 "keywords": unique_keywords,
+                "total_keywords": len(unique_keywords),
+                "source_file": os.path.basename(excel_path),
+                "extraction_method": "first_column_filtered",
+                "filtered_out": ["чистые цифры", "технические коды", "короткие слова без букв"]
             }
 
             # Определение пути для JSON файла
             if json_path is None:
-                base_path = Path(excel_path).stem
-                json_path = f"{base_path}.json"
-                self.logger.debug(f"Путь JSON не указан, сгенерирован: {json_path}")
+                base_name = Path(excel_path).stem
+                json_path = os.path.join(self.keywords_dir, f"{base_name}_filtered.json")
 
             # Сохранение JSON файла
-            self.logger.info(f"Сохранение JSON в файл: {json_path}")
+            self.logger.info(f"💾 Сохранение JSON в файл: {json_path}")
 
-            try:
-                with open(json_path, 'w', encoding='utf-8') as json_file:
-                    json.dump(json_data, json_file, ensure_ascii=False, indent=2)
+            with open(json_path, 'w', encoding='utf-8') as json_file:
+                json.dump(json_data, json_file, ensure_ascii=False, indent=2)
 
-                file_size = os.path.getsize(json_path)
-                self.logger.info(f"JSON файл сохранен. Размер: {file_size} байт")
-                self.logger.debug(f"JSON сохранен по пути: {json_path}")
-
-            except Exception as e:
-                error_msg = f"Ошибка сохранения JSON файла: {str(e)}"
-                self.logger.error(error_msg)
-                raise ValueError(error_msg) from e
-
-            # Удаление исходного Excel файла (если не сохранен)
-            if not self.preserve_excel:
-                self.logger.info(f"Удаление исходного Excel файла: {excel_path}")
-
-                try:
-                    os.remove(excel_path)
-                    self.logger.info("Исходный файл успешно удален")
-                except PermissionError as e:
-                    self.logger.warning(f"Нет прав для удаления файла: {str(e)}")
-                except Exception as e:
-                    self.logger.error(f"Ошибка при удалении файла: {str(e)}")
-                    # Не прерываем выполнение, так как конвертация уже выполнена
-            else:
-                self.logger.info("Исходный Excel файл сохранен (preserve_excel=True)")
-
-            self.logger.info(
-                f"Конвертация завершена успешно. "
-                f"Уникальных ключевых слов извлечено: {len(unique_keywords)}, "
-                f"JSON файл: {json_path}"
-            )
+            file_size = os.path.getsize(json_path)
+            self.logger.info(f"✅ JSON файл сохранен. Размер: {file_size} байт")
+            self.logger.info(f"✅ Конвертация завершена успешно. Уникальных ключевых слов: {len(unique_keywords)}")
 
             return json_path
 
         except Exception as e:
-            self.logger.exception(f"Критическая ошибка при конвертации файла {excel_path}")
+            self.logger.exception(f"❌ Критическая ошибка при конвертации файла {excel_path}")
             raise
 
     def create_enriched_json(self, excel_path: str, category: str, purpose: Union[str, List[str]],
                              additional_params: List[str], json_path: Optional[str] = None) -> str:
         """
-        Создает обогащенный JSON файл с 4 колонками:
-        - category
-        - purpose 
-        - additional_params
-        - keywords
-
-        Args:
-            excel_path: Путь к исходному Excel файлу
-            category: Категория товара
-            purpose: Назначение товара
-            additional_params: Дополнительные параметры
-            json_path: Путь для сохранения JSON файла
-
-        Returns:
-            Путь к созданному JSON файлу
+        Создает обогащенный JSON файл с 4 колонками
         """
         try:
             self.logger.info(f"Создание обогащенного JSON из файла: {excel_path}")
             self.logger.info(
                 f"Параметры: category={category}, purpose={purpose}, additional_params={additional_params}")
 
-            # Сначала конвертируем Excel в базовый JSON
+            # 1. Сначала конвертируем Excel в базовый JSON
             base_json_path = self.convert_xlsx_to_json(excel_path)
 
             if not base_json_path:
                 raise ValueError("Не удалось создать базовый JSON файл")
 
-            # Загружаем базовый JSON
+            # 2. Загружаем базовый JSON
             with open(base_json_path, 'r', encoding='utf-8') as f:
                 base_data = json.load(f)
 
-            # Получаем ключевые слова
-            keywords = base_data.get('words', [])
+            # 3. Получаем ключевые слова (исправленная логика)
+            keywords = []
 
-            # Создаем обогащенную структуру
+            # Пробуем разные ключи
+            possible_keys = ['keywords', 'words', 'key_words', 'data']
+            for key in possible_keys:
+                if key in base_data:
+                    keywords = base_data[key]
+                    self.logger.info(f"✅ Ключевые слова найдены по ключу '{key}': {len(keywords)} слов")
+                    break
+
+            # Если не нашли по ключам, пробуем получить первый список в данных
+            if not keywords and base_data:
+                # Ищем любой список в данных
+                for key, value in base_data.items():
+                    if isinstance(value, list):
+                        keywords = value
+                        self.logger.info(f"✅ Найден список по ключу '{key}': {len(keywords)} элементов")
+                        break
+
+            self.logger.info(f"📊 Итоговое количество ключевых слов для сохранения: {len(keywords)}")
+
+            # 4. Создаем обогащенную структуру
             enriched_data = {
                 'category': category,
                 'purpose': purpose,
                 'additional_params': additional_params,
-                'keywords': keywords
+                'keywords': keywords,  # Здесь должны быть ключевые слова
+                'purposes': purpose if isinstance(purpose, list) else [purpose] if purpose else []
             }
 
-            # Определение пути для обогащенного JSON файла
+            # 5. Определение пути для обогащенного JSON файла
             if json_path is None:
-                base_name = Path(excel_path).stem
                 safe_category = category.replace('/', '_').replace(' ', '_')
-                # Сохраняем в папке keywords
-                json_path = os.path.join(self.keywords_dir, f"{safe_category}_enriched.json")
-                self.logger.debug(f"Путь JSON не указан, сгенерирован: {json_path}")
 
-            # Сохранение обогащенного JSON файла
+                # Формируем имя файла из назначения
+                purpose_str = ""
+                if isinstance(purpose, list):
+                    purpose_str = '_'.join(purpose[:2]) if purpose else 'all'
+                else:
+                    purpose_str = str(purpose) if purpose else 'all'
+
+                # Убираем запрещенные символы
+                purpose_str = purpose_str.replace('/', '_').replace(' ', '_').replace('\\', '_')[:20]
+
+                json_path = os.path.join(self.keywords_dir, f"{safe_category}_{purpose_str}_enriched.json")
+                self.logger.debug(f"Путь JSON сгенерирован: {json_path}")
+
+            # 6. Сохранение обогащенного JSON файла
             self.logger.info(f"Сохранение обогащенного JSON в файл: {json_path}")
+            self.logger.info(f"📊 Сохраняемые данные: keywords={len(keywords)}, category={category}")
 
             with open(json_path, 'w', encoding='utf-8') as json_file:
                 json.dump(enriched_data, json_file, ensure_ascii=False, indent=2)
@@ -249,7 +286,13 @@ class KeywordsProcessor:
             file_size = os.path.getsize(json_path)
             self.logger.info(f"Обогащенный JSON файл сохранен. Размер: {file_size} байт")
 
-            # Удаляем базовый JSON файл
+            # 7. Проверяем сохраненные данные
+            with open(json_path, 'r', encoding='utf-8') as f:
+                saved_data = json.load(f)
+                saved_keywords_count = len(saved_data.get('keywords', []))
+                self.logger.info(f"✅ Проверка: в сохраненном файле {saved_keywords_count} ключевых слов")
+
+            # 8. Удаляем базовый JSON файл (если нужно)
             try:
                 if os.path.exists(base_json_path) and base_json_path != json_path:
                     os.remove(base_json_path)
@@ -258,7 +301,7 @@ class KeywordsProcessor:
                 self.logger.warning(f"Не удалось удалить базовый JSON файл: {str(e)}")
 
             self.logger.info(
-                f"Обогащенный JSON создан успешно. "
+                f"✅ Обогащенный JSON создан успешно. "
                 f"Ключевых слов: {len(keywords)}, "
                 f"Файл: {json_path}"
             )
@@ -266,8 +309,9 @@ class KeywordsProcessor:
             return json_path
 
         except Exception as e:
-            self.logger.exception(f"Критическая ошибка при создании обогащенного JSON из файла {excel_path}")
+            self.logger.exception(f"❌ Критическая ошибка при создании обогащенного JSON из файла {excel_path}")
             raise
+
 
     def load_keywords_from_json(self, json_file_path: str) -> List[str]:
         """

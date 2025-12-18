@@ -37,6 +37,7 @@ class MPStatsScraperService:
         self.textarea_config = MPSTATS_UI_CONFIG["forms"]["textarea"]
         self.find_queries_btn_config = MPSTATS_UI_CONFIG["forms"]["find_queries_btn"]
         self.downloads_config = MPSTATS_UI_CONFIG["download"]["download_btn"]
+        self.driver = None
 
         self.by_mapping = {
             "NAME": By.NAME,
@@ -166,6 +167,14 @@ class MPStatsScraperService:
 
     async def _setup_driver(self) -> webdriver.Chrome:
         """Настройка Chrome драйвера с stealth режимом"""
+        import os
+        from pathlib import Path
+
+        # ИСПРАВЛЕНО: Явно указываем путь для скачивания
+        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        self.download_dir = Path(app_dir) / "downloads" / "mpstats"
+        self.download_dir.mkdir(parents=True, exist_ok=True)
+
         self.driver_manager = ChromeDriverManager(
             headless=False,
             use_stealth=True
@@ -190,13 +199,15 @@ class MPStatsScraperService:
         user_agent = random.choice(user_agents)
 
         driver = self.driver_manager.create_driver(
-            download_dir=str(self.download_dir),
+            download_dir=str(self.download_dir),  # Явно передаем путь
             block_videos=True,
             block_images=False,
             block_sounds=True,
             user_agent=user_agent,
             stealth_options=stealth_options
         )
+
+        await self._check_download_directory(driver)  # проверка директории для скачивания
 
         # Случайные задержки
         driver.implicitly_wait(random.uniform(2, 5))
@@ -213,6 +224,12 @@ class MPStatsScraperService:
         )
 
         logger.info(f"✅ Драйвер создан. Размер окна: {width}x{height}")
+        logger.info(f"📂 Путь для скачивания: {self.download_dir}")
+
+        # Дополнительная проверка настроек скачивания
+        download_dir_setting = driver.execute_script("return JSON.stringify({download: chrome.downloads})")
+        logger.info(f"Настройки скачивания в браузере: {download_dir_setting}")
+
         return driver
 
     async def download_keywords_data(self, driver, params: Dict[str, Any]) -> str:
@@ -221,6 +238,15 @@ class MPStatsScraperService:
         Возвращает путь к скачанному Excel файлу
         """
         try:
+
+            logger.info(f"📂 Ожидаю файл в директории: {self.download_dir}")
+            logger.info(f"📂 Абсолютный путь: {os.path.abspath(str(self.download_dir))}")
+
+            # Создайте тестовый файл для проверки
+            test_file = os.path.join(self.download_dir, "test_check.txt")
+            with open(test_file, 'w') as f:
+                f.write("Test if directory is writable")
+            logger.info(f"✅ Тестовый файл создан: {test_file}")
             from selenium.webdriver.common.by import By
             from selenium.webdriver.support.ui import WebDriverWait
             from selenium.webdriver.support import expected_conditions as EC
@@ -290,37 +316,54 @@ class MPStatsScraperService:
             self.logger.error(f"Ошибка при скачивании: {e}")
             raise
 
-    async def _wait_for_download(self, timeout: int = 60, check_interval: int = 1) -> str:
-        """Ожидание завершения скачивания файла"""
+    async def _wait_for_download(self, timeout: int = 120, check_interval: int = 1) -> str:
+        """Ожидание завершения скачивания файла с улучшенной логикой"""
         import time
 
-        initial_files = set()
-        if os.path.exists(self.download_dir):
-            initial_files = set(os.listdir(self.download_dir))
-
-        self.logger.info(f"⏳ Ожидаю скачивания файла...")
+        logger.info(f"⏳ Ожидаю скачивания файла в {self.download_dir}. Таймаут: {timeout}с")
 
         start_time = time.time()
+        # Увеличиваем таймаут, чтобы не прерывать процесс, если файл появляется позже.
         while time.time() - start_time < timeout:
-            if os.path.exists(self.download_dir):
-                current_files = set(os.listdir(self.download_dir))
-                new_files = current_files - initial_files
+            if not os.path.exists(self.download_dir):
+                await asyncio.sleep(check_interval)
+                continue
 
-                if new_files:
-                    # Ищем .xlsx файлы
-                    xlsx_files = [f for f in new_files if f.endswith('.xlsx')]
+            # Ищем все файлы .xlsx и .xls в директории
+            for filename in os.listdir(self.download_dir):
+                if filename.endswith('.xlsx') or filename.endswith('.xls'):
+                    file_path = os.path.join(self.download_dir, filename)
 
-                    if xlsx_files:
-                        file_path = os.path.join(self.download_dir, xlsx_files[0])
+                    # КРИТИЧЕСКИ ВАЖНО: проверяем, что файл больше не скачивается.
+                    # Исключаем временные файлы браузера (обычно .crdownload или .tmp).
+                    if filename.endswith('.crdownload') or filename.endswith('.tmp'):
+                        logger.debug(f"Файл в процессе скачивания (пропускаем): {filename}")
+                        continue
 
-                        # Проверяем, что файл полностью скачан
-                        if os.path.getsize(file_path) > 0:
-                            self.logger.info(f"✅ Файл готов: {xlsx_files[0]}")
+                    # Проверяем, что файл имеет нормальный размер и не заблокирован системой
+                    try:
+                        file_size = os.path.getsize(file_path)
+                        if file_size > 1024:  # Минимальный размер (1KB)
+                            logger.info(f"✅ Найден готовый Excel файл: {filename} (размер: {file_size} байт)")
                             return file_path
+                        else:
+                            logger.debug(f"Файл слишком мал, возможно, не скачан: {filename} ({file_size} байт)")
+                    except OSError as e:
+                        logger.debug(f"Не удалось проверить файл {filename}: {e}")
 
             await asyncio.sleep(check_interval)
 
-        self.logger.error("⏰ Таймаут ожидания скачивания")
+        # Если цикл завершился по таймауту, сделаем последнюю попытку найти любой Excel файл
+        logger.warning("Таймаут ожидания. Делаю финальную проверку директории...")
+        if os.path.exists(self.download_dir):
+            for filename in os.listdir(self.download_dir):
+                if filename.endswith('.xlsx') or filename.endswith('.xls'):
+                    if not (filename.endswith('.crdownload') or filename.endswith('.tmp')):
+                        final_file = os.path.join(self.download_dir, filename)
+                        logger.info(f"✅ Файл найден после таймаута: {final_file}")
+                        return final_file
+
+        logger.error("❌ Файл не найден после таймаута ожидания.")
         return None
 
     async def _login_to_mpstats(self):
@@ -332,7 +375,7 @@ class MPStatsScraperService:
             self.driver.get('https://mpstats.io/seo/keywords/expanding')
             time.sleep(random.uniform(2, 4))
             current_url = self.driver.current_url
-            if current_url == 'https://mpstats.io/login':
+            if 'https://mpstats.io/login' in current_url:
 
                 # Ожидание формы логина
                 WebDriverWait(self.driver, 30).until(
@@ -368,7 +411,9 @@ class MPStatsScraperService:
                 )
 
                 time.sleep(random.uniform(2, 4))
+                self.driver.get('https://mpstats.io/seo/keywords/expanding')
                 logger.info("✅ Авторизация успешна")
+
             elif current_url == 'https://mpstats.io/seo/keywords/expanding':
                 logger.info('✅ Вход без логина при помощи chrome_profile')
 
@@ -501,10 +546,6 @@ class MPStatsScraperService:
         if category:
             # Маппинг категорий на русский
             category_map = {
-                "electronics": "электроника",
-                "clothing": "одежда",
-                "home": "дом и сад",
-                "beauty": "красота и здоровье",
                 "decorative_panels": "декоративные панели",
                 "soft_panels": "мягкие панели",
                 "self_adhesive_wallpaper": "самоклеящиеся обои",
@@ -521,12 +562,33 @@ class MPStatsScraperService:
         purposes = params.get('purposes', [])
         purpose = params.get('purpose', '')
 
+        # Маппинг назначений на русский
+        purpose_map = {
+            "wood": "под дерево",
+            "with_pattern": "С рисунком",
+            "kitchen": "кухня",
+            "tile": "Плитка",
+            "3d": "3Д",
+            "in_roll": "В рулоне",
+            "self_adhesive": "Самоклеящиеся",
+            "stone": "Под камень",
+            "bathroom": "ванная",
+            "bedroom": "спальня",
+            "brick": "Под кирпич",
+            "marble": "Под мрамор",
+            "living_room": "гостиная",
+            "white": "белый"
+            # Добавьте другие назначения по мере необходимости
+        }
+
         # Если есть purposes (массив), используем его
         if purposes:
             if isinstance(purposes, list):
                 for p in purposes[:3]:  # Берем максимум 3 назначения
                     if p and isinstance(p, str):
-                        purpose_clean = self._clean_purpose_text(p)
+                        # Пробуем найти русский перевод
+                        purpose_clean = purpose_map.get(p.lower(), p)
+                        purpose_clean = self._clean_purpose_text(purpose_clean)
                         if purpose_clean:
                             parts.append(purpose_clean)
             else:
@@ -534,12 +596,16 @@ class MPStatsScraperService:
                 if isinstance(purposes, str):
                     purpose_items = [p.strip() for p in purposes.split(',') if p.strip()]
                     for p in purpose_items[:3]:
-                        purpose_clean = self._clean_purpose_text(p)
+                        # Пробуем найти русский перевод
+                        purpose_clean = purpose_map.get(p.lower(), p)
+                        purpose_clean = self._clean_purpose_text(purpose_clean)
                         if purpose_clean:
                             parts.append(purpose_clean)
         # Или используем старый формат purpose
         elif purpose:
-            purpose_clean = self._clean_purpose_text(purpose)
+            # Пробуем найти русский перевод
+            purpose_clean = purpose_map.get(purpose.lower(), purpose)
+            purpose_clean = self._clean_purpose_text(purpose_clean)
             if purpose_clean:
                 parts.append(purpose_clean)
 
@@ -570,7 +636,32 @@ class MPStatsScraperService:
         if len(query_text) > 100:
             query_text = query_text[:97] + "..."
 
+        logger.info(f"📝 Сформирован текст запроса: '{query_text}'")
         return query_text
+
+    async def _check_download_directory(self, driver):
+        """Проверка настроек директории скачивания"""
+        try:
+            # Проверяем текущую директорию скачивания через JavaScript
+            download_path = driver.execute_script("""
+                return new Promise((resolve, reject) => {
+                    chrome.downloads.getFileBrowser(function(downloadItem) {
+                        resolve(downloadItem.filename);
+                    });
+                });
+            """)
+            logger.info(f"Текущая директория скачивания в браузере: {download_path}")
+        except Exception as e:
+            logger.warning(f"Не удалось проверить директорию скачивания: {e}")
+
+        # Проверяем существование директории
+        if os.path.exists(self.download_dir):
+            logger.info(f"✅ Директория существует: {self.download_dir}")
+            logger.info(f"   Содержимое: {os.listdir(self.download_dir)}")
+        else:
+            logger.error(f"❌ Директория не существует: {self.download_dir}")
+            os.makedirs(self.download_dir, exist_ok=True)
+            logger.info(f"   Создана директория: {self.download_dir}")
 
     def _clean_purpose_text(self, purpose: str) -> str:
         """
@@ -597,19 +688,32 @@ class MPStatsScraperService:
 
     def cleanup(self):
         """Очистка ресурсов"""
-        if self.driver:
-            try:
-                self.driver.quit()
-                logger.info("Драйвер закрыт")
-            except:
-                pass
-            self.driver = None
+        try:
+            # Проверяем наличие драйвера безопасно
+            if hasattr(self, 'driver') and self.driver:
+                try:
+                    self.driver.quit()
+                    logger.info("✅ Драйвер закрыт")
+                except:
+                    logger.warning("⚠️ Не удалось закрыть драйвер (уже закрыт)")
+                finally:
+                    self.driver = None
+            else:
+                logger.info("ℹ️ Драйвер уже закрыт или не существует")
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка при очистке: {e}")
 
         # Очистка временных файлов
         try:
-            for file in self.download_dir.glob("*"):
-                if file.is_file():
-                    file.unlink()
-            logger.info("Временные файлы очищены")
+            if hasattr(self, 'download_dir') and os.path.exists(self.download_dir):
+                for file in os.listdir(self.download_dir):
+                    file_path = os.path.join(self.download_dir, file)
+                    if os.path.isfile(file_path):
+                        try:
+                            os.remove(file_path)
+                        except:
+                            pass
+                logger.info("🗑️ Временные файлы очищены")
         except Exception as e:
-            logger.error(f"Ошибка при очистке файлов: {e}")
+            logger.error(f"❌ Ошибка при очистке файлов: {e}")

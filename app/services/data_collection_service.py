@@ -20,7 +20,7 @@ class DataCollectionService:
         self.logger = logging.getLogger(__name__)
         self.keywords_processor = KeywordsProcessor(
             preserve_excel=False,
-            target_column="Кластер WB"
+            target_column="Слова"
         )
 
         # Пути
@@ -68,6 +68,15 @@ class DataCollectionService:
                 raise Exception("Не удалось скачать файл с MPStats")
 
             self.logger.info(f"✅ Файл скачан: {excel_file}")
+
+            self.logger.info("🔄 Закрываю Chrome драйвер...")
+            if hasattr(self.scraper, 'driver') and self.scraper.driver:
+                try:
+                    self.scraper.driver.quit()
+                    self.scraper.driver = None
+                    self.logger.info("✅ Chrome драйвер закрыт")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Не удалось закрыть драйвер: {e}")
 
             # 3. Обработка Excel в JSON
             self.logger.info("🔄 Обработка Excel файла...")
