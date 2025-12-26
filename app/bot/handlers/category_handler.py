@@ -593,11 +593,21 @@ class CategoryHandler(BaseMessageHandler):
                 builder = InlineKeyboardBuilder()
                 builder.button(text="🚀 Сгенерировать заголовок", callback_data="generate_title")
             else:  # advanced
+
+                category_description = ""
+                if 'category_repo' in self.repositories:
+                    category_repo = self.repositories['category_repo']
+                    category_obj = category_repo.get_by_id(session.category_id)
+                    if category_obj and category_obj.description:
+                        category_description = category_obj.description
                 text += "🤖 <b>Продвинутая генерация:</b>\n"
                 text += "• Анализ ключевых слов с MPStats\n"
                 text += "• Глубокая оптимизация для маркетплейсов\n"
                 text += "• Более точные результаты\n\n"
                 text += "Сначала соберем данные с MPStats, затем сгенерируем заголовок:"
+
+                if category_description:
+                    text += f"• <b>Описание категории:</b> {category_description[:100]}...\n"
 
                 builder = InlineKeyboardBuilder()
                 builder.button(text="🔍 Собрать данные", callback_data=f"collect_data_{session.id}")

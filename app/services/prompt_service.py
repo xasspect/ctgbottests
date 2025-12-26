@@ -9,6 +9,57 @@ class PromptService:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
 
+    def get_keywords_filter_prompt(
+            self,
+            category: str,
+            purposes: List[str],
+            additional_params: List[str],
+            category_description: str = "",
+            max_keywords: int = 10
+    ) -> tuple[str, str]:
+        """
+        Промпт для фильтрации ключевых слов через GPT
+
+        Returns:
+            Кортеж (system_prompt, user_prompt)
+        """
+        purposes_text = ", ".join(purposes) if isinstance(purposes, list) else str(purposes)
+        params_text = ", ".join(additional_params) if additional_params else "не указаны"
+
+        system_prompt = f"""Ты — профессиональный маркетолог-копирайтер для маркетплейсов Wildberries и OZON. 
+        Твоя задача — отобрать ТОЛЬКО {max_keywords} самых продающих и релевантных ключевых слов из списка 
+        для создания заголовков и описаний товаров."""
+
+        user_prompt = f"""
+        Контекст товара:
+        - Категория: {category}
+        - Назначения: {purposes_text}
+        - Доп. параметры: {params_text}
+        - Описание категории: {category_description[:200] if category_description else "не указано"}
+
+        Критерии отбора ключевых слов (В ПРИОРИТЕТЕ):
+        1. **Продающие слова** — которые побуждают к покупке (качество, премиум, выгодно, новинка, хит)
+        2. **Конкретика** — точные названия товаров/свойств
+        3. **Пользовательский язык** — как ищут реальные покупатели
+        4. **Релевантность категории** — точно соответствуют "{category}"
+        5. **Учет назначений** — подходят для "{purposes_text}"
+        6. **SEO-оптимизация** — популярные поисковые запросы на маркетплейсах
+        7. **Коммерческий потенциал** — слова, которые конвертируют в продажи
+
+        ИСКЛЮЧАЙ:
+        - Общие слова без конкретики (типа "товар", "изделие")
+        - Технические термины, не понятные покупателям
+        - Слова с ошибками или опечатками
+        - Слишком длинные фразы (больше 3 слов)
+        - Устаревшие или непопулярные запросы
+
+        Список ключевых слов для фильтрации: {{keywords_list}}
+
+        Формат ответа: ТОЛЬКО список из {max_keywords} ключевых слов через запятую, без нумерации, без пояснений.
+        """
+
+        return system_prompt, user_prompt
+
     def get_title_prompt(self, category_name: str, purpose: str, additional_params: list) -> str:
         """Промпт для генерации заголовка"""
         prompt = f"""

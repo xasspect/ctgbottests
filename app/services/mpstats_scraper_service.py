@@ -65,6 +65,13 @@ class MPStatsScraperService:
         Returns:
             Dict с результатом выполнения
         """
+        # ДЕБАГ: выводим полученные параметры
+        logger.info("=" * 50)
+        logger.info("📥 ПОЛУЧЕНЫ ПАРАМЕТРЫ ДЛЯ СКРАПИНГА:")
+        for key, value in params.items():
+            logger.info(f"  - {key}: {value}")
+        logger.info("=" * 50)
+
         # Валидация параметров
         validation_result = self._validate_params(params)
         if not validation_result["valid"]:
@@ -541,6 +548,9 @@ class MPStatsScraperService:
         """
         parts = []
 
+        # ДЕБАГ: выводим полученные параметры
+        logger.info(f"📝 Параметры для формирования запроса: {params}")
+
         # 1. Категория
         category = params.get('category', '').strip()
         if category:
@@ -557,10 +567,32 @@ class MPStatsScraperService:
             }
             category_name = category_map.get(category, category)
             parts.append(category_name)
+            logger.info(f"✅ Категория: {category_name}")
 
-        # 2. Назначение (поддерживаем оба варианта: purpose и purposes)
-        purposes = params.get('purposes', [])
+        # 2. Описание категории (из БД)
+        category_description = params.get('category_description', '').strip()
+        if category_description:
+            logger.info(f"📋 Описание категории получено: {category_description[:50]}...")
+            # Очищаем описание от лишних символов и добавляем ключевые слова
+            # Удаляем пунктуацию, оставляем только слова
+            import re
+            clean_description = re.sub(r'[^\w\s]', ' ', category_description)
+            description_words = clean_description.split()
+
+            # Берем первые 5-7 ключевых слов из описания (слова длиной > 3 символов)
+            important_words = [word for word in description_words if len(word) > 3][:7]
+            if important_words:
+                logger.info(f"✅ Ключевые слова из описания: {important_words}")
+                parts.extend(important_words)
+        else:
+            logger.warning("⚠️ Описание категории не было передано или пустое")
+
+        # 3. Назначение (поддерживаем оба варианта: purpose и purposes)
         purpose = params.get('purpose', '')
+        purposes = params.get('purposes', [])
+
+        logger.info(f"🎯 Назначение (purpose): {purpose}")
+        logger.info(f"🎯 Назначения (purposes): {purposes}")
 
         # Маппинг назначений на русский
         purpose_map = {
@@ -578,40 +610,32 @@ class MPStatsScraperService:
             "marble": "Под мрамор",
             "living_room": "гостиная",
             "white": "белый"
-            # Добавьте другие назначения по мере необходимости
         }
 
-        # Если есть purposes (массив), используем его
-        if purposes:
-            if isinstance(purposes, list):
-                for p in purposes[:3]:  # Берем максимум 3 назначения
-                    if p and isinstance(p, str):
-                        # Пробуем найти русский перевод
-                        purpose_clean = purpose_map.get(p.lower(), p)
-                        purpose_clean = self._clean_purpose_text(purpose_clean)
-                        if purpose_clean:
-                            parts.append(purpose_clean)
-            else:
-                # Если это строка с разделителями
-                if isinstance(purposes, str):
-                    purpose_items = [p.strip() for p in purposes.split(',') if p.strip()]
-                    for p in purpose_items[:3]:
-                        # Пробуем найти русский перевод
-                        purpose_clean = purpose_map.get(p.lower(), p)
-                        purpose_clean = self._clean_purpose_text(purpose_clean)
-                        if purpose_clean:
-                            parts.append(purpose_clean)
-        # Или используем старый формат purpose
-        elif purpose:
+        # Если есть purpose строка
+        if purpose:
             # Пробуем найти русский перевод
             purpose_clean = purpose_map.get(purpose.lower(), purpose)
             purpose_clean = self._clean_purpose_text(purpose_clean)
             if purpose_clean:
                 parts.append(purpose_clean)
+                logger.info(f"✅ Добавлено назначение из purpose: {purpose_clean}")
 
-        # 3. Дополнительные параметры
+        # Если есть purposes массив
+        elif isinstance(purposes, list) and purposes:
+            for p in purposes[:3]:  # Берем максимум 3 назначения
+                if p and isinstance(p, str):
+                    # Пробуем найти русский перевод
+                    purpose_clean = purpose_map.get(p.lower(), p)
+                    purpose_clean = self._clean_purpose_text(purpose_clean)
+                    if purpose_clean:
+                        parts.append(purpose_clean)
+                        logger.info(f"✅ Добавлено назначение из purposes: {purpose_clean}")
+
+        # 4. Дополнительные параметры
         additional_params = params.get('additional_params', [])
         if additional_params:
+            logger.info(f"📝 Доп. параметры: {additional_params}")
             # Если это строка, разделяем по запятым
             if isinstance(additional_params, str):
                 additional_params = [p.strip() for p in additional_params.split(',') if p.strip()]
@@ -623,8 +647,9 @@ class MPStatsScraperService:
                         param_clean = param.strip()
                         if param_clean:
                             parts.append(param_clean)
+                            logger.info(f"✅ Добавлен доп. параметр: {param_clean}")
 
-        # 4. Проверяем, что есть хотя бы одна часть
+        # 5. Проверяем, что есть хотя бы одна часть
         if not parts:
             logger.error("❌ Не удалось сформировать текст запроса: все параметры пустые")
             return ""
@@ -635,8 +660,12 @@ class MPStatsScraperService:
         # Ограничиваем длину
         if len(query_text) > 100:
             query_text = query_text[:97] + "..."
+            logger.info(f"⚠️ Текст запроса обрезан до 100 символов")
 
-        logger.info(f"📝 Сформирован текст запроса: '{query_text}'")
+        logger.info(f"📝 ФИНАЛЬНЫЙ текст запроса: '{query_text}'")
+        logger.info(f"📏 Длина: {len(query_text)} символов")
+        logger.info(f"🔤 Частей: {len(parts)}")
+
         return query_text
 
     async def _check_download_directory(self, driver):

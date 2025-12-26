@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from aiogram.filters import Command
 from aiogram import Router, F
@@ -33,10 +34,10 @@ class GenerationHandler(BaseMessageHandler):
     async def handle_collect_data(self, callback: CallbackQuery):
         """Обработка нажатия кнопки 'Собрать данные'"""
         session_id = callback.data.replace("collect_data_", "")
-        await callback.answer("✅ Начинаю сбор данных...")  # ОТВЕЧАЕМ СРАЗУ ЖЕ!
+        await callback.answer("✅ Начинаю сбор данных...")
 
         if 'session_repo' not in self.repositories:
-            await callback.answer("❌ Репозитории не инициализированы")
+            await callback.message.answer("❌ Репозитории не инициализированы")
             return
 
         session_repo = self.repositories['session_repo']
@@ -56,13 +57,25 @@ class GenerationHandler(BaseMessageHandler):
             data_collection_service = self.services.get('data_collection')
 
             if not data_collection_service:
-                # Создаем сервис при необходимости
+                # Создаем сервис при необходимости, передавая другие сервисы
                 from app.services.data_collection_service import DataCollectionService
                 from app.services.mpstats_scraper_service import MPStatsScraperService
 
                 scraper_service = MPStatsScraperService(self.config)
-                data_collection_service = DataCollectionService(self.config, scraper_service)
+
+                # Передаем необходимые сервисы
+                data_collection_service = DataCollectionService(
+                    config=self.config,
+                    scraper_service=scraper_service,
+                    services={
+                        'openai': self.services.get('openai'),
+                        'prompt': self.services.get('prompt'),
+                        'content': self.services.get('content')
+                    }
+                )
                 self.services['data_collection'] = data_collection_service
+                self.logger.info(
+                    f"✅ DataCollectionService создан с сервисами: {list(data_collection_service.services.keys())}")
 
             # Получаем категорию по ID
             category_repo = self.repositories['category_repo']
@@ -72,31 +85,40 @@ class GenerationHandler(BaseMessageHandler):
                 await status_message.edit_text("❌ Категория не найдена")
                 return
 
-            # Запускаем сбор данных (теперь передаем массив purposes)
+            # Получаем описание категории
+            category_description = ""
+            if hasattr(category, 'description') and category.description:
+                category_description = category.description
+            elif hasattr(category, 'hidden_description') and category.hidden_description:
+                category_description = category.hidden_description
+
+            # Запускаем сбор данных с GPT-фильтрацией
             result = await data_collection_service.collect_keywords_data(
                 category=category.name,
                 purpose=session.purposes if hasattr(session, 'purposes') and session.purposes else [],
-                # Передаем массив
-                additional_params=session.additional_params or []
+                additional_params=session.additional_params or [],
+                category_description=category_description
             )
 
             if result.get("status") == "success":
-                # Обновляем сессию с ключевыми словами
-                session.keywords = result.get("keywords", [])
+                # Обновляем сессию с отфильтрованными ключевыми словами
+                filtered_keywords = result.get("keywords", [])
+                session.keywords = filtered_keywords
                 session.current_step = "data_collected"
+
                 session_repo.update(
                     session.id,
-                    keywords=result.get("keywords", []),
+                    keywords=filtered_keywords,
                     current_step="data_collected"
                 )
 
                 # Формируем сообщение с результатами
                 message_text = (
-                    f"✅ <b>Данные собраны успешно!</b>\n\n"
+                    f"✅ <b>Данные собраны и обработаны GPT!</b>\n\n"
                     f"📁 <b>Категория:</b> {result['category']}\n"
                 )
 
-                # Показываем назначения как массив
+                # Показываем назначения
                 if result.get('purposes'):
                     purposes_list = result['purposes']
                     if isinstance(purposes_list, list) and purposes_list:
@@ -104,23 +126,28 @@ class GenerationHandler(BaseMessageHandler):
                     elif purposes_list:
                         message_text += f"🎯 <b>Назначение:</b> {purposes_list}\n"
 
-                if result['additional_params']:
-                    message_text += f"📝 <b>Доп. параметры:</b> {', '.join(result['additional_params'])}\n\n"
-                else:
-                    message_text += f"📝 <b>Доп. параметры:</b> не указаны\n\n"
+                # Информация о фильтрации
+                original_count = result.get('original_keywords_count', 0)
+                filtered_count = result.get('filtered_keywords_count', len(filtered_keywords))
+                filtering_method = result.get('filtering_method', 'unknown')
 
-                # Добавляем ключевые слова (первые 15)
-                keywords_preview = result.get("keywords", [])[:15]
-                if keywords_preview:
+                message_text += f"\n📊 <b>Статистика фильтрации:</b>\n"
+                message_text += f"• Собрано: {original_count} ключевых слов\n"
+                message_text += f"• Отфильтровано GPT: {filtered_count} ключевых слов\n"
+                message_text += f"• Метод: {filtering_method}\n\n"
+
+                # Показываем отфильтрованные ключевые слова
+                if filtered_keywords:
                     message_text += (
-                        f"🔑 <b>Ключевые слова (первые 15):</b>\n"
-                        f"{', '.join(keywords_preview)}\n\n"
-                        f"<i>Всего собрано {len(result['keywords'])} ключевых слов</i>"
+                        f"🔑 <b>Топ-{len(filtered_keywords)} ключевых слов (отфильтрованы GPT):</b>\n"
                     )
+                    for i, keyword in enumerate(filtered_keywords, 1):
+                        message_text += f"{i}. {keyword}\n"
 
                 # Кнопки для продолжения
                 builder = InlineKeyboardBuilder()
                 builder.button(text="🚀 Сгенерировать заголовок", callback_data=f"generate_title_advanced_{session.id}")
+                builder.button(text="📊 Показать все ключевые слова", callback_data=f"show_all_keywords_{session.id}")
                 builder.button(text="↩️ Изменить параметры", callback_data="change_params")
                 builder.adjust(1)
 
@@ -135,6 +162,62 @@ class GenerationHandler(BaseMessageHandler):
         except Exception as e:
             await status_message.edit_text(f"❌ <b>Ошибка при сборе данных:</b>\n{str(e)[:200]}")
             self.logger.error(f"Ошибка сбора данных: {e}", exc_info=True)
+
+    async def handle_show_all_keywords(self, callback: CallbackQuery):
+        """Показать все ключевые слова (оригинальные и отфильтрованные)"""
+        session_id = callback.data.replace("show_all_keywords_", "")
+
+        if 'session_repo' not in self.repositories:
+            await callback.answer("❌ Репозитории не инициализированы")
+            return
+
+        session_repo = self.repositories['session_repo']
+        session = session_repo.get_by_id(session_id)
+
+        if not session:
+            await callback.answer("❌ Сессия не найдена")
+            return
+
+        # Загружаем JSON файл
+        try:
+            import glob
+            import os
+            from pathlib import Path
+
+            # Ищем JSON файл для этой сессии
+            keywords_dir = Path(self.config.paths.keywords_dir)
+            pattern = f"*{session.category_id}*enriched.json"
+            json_files = list(keywords_dir.glob(pattern))
+
+            if json_files:
+                json_file = json_files[0]
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                all_keywords = data.get("all_keywords", [])
+                filtered_keywords = data.get("keywords", [])
+
+                message_text = f"📊 <b>Все ключевые слова:</b>\n\n"
+                message_text += f"<b>Отфильтровано GPT ({len(filtered_keywords)}):</b>\n"
+                for kw in filtered_keywords:
+                    message_text += f"✅ {kw}\n"
+
+                message_text += f"\n<b>Всего собрано ({len(all_keywords)}):</b>\n"
+                # Показываем первые 30 из всех
+                for i, kw in enumerate(all_keywords[:30], 1):
+                    is_filtered = kw in filtered_keywords
+                    icon = "✅" if is_filtered else "🔸"
+                    message_text += f"{icon} {kw}\n"
+
+                if len(all_keywords) > 30:
+                    message_text += f"\n... и еще {len(all_keywords) - 30} ключевых слов"
+
+                await callback.message.answer(message_text)
+            else:
+                await callback.answer("❌ JSON файл не найден")
+
+        except Exception as e:
+            await callback.answer(f"❌ Ошибка: {str(e)[:50]}")
 
 
     async def _generate_title_simple(self, callback: CallbackQuery, session):

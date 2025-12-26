@@ -69,6 +69,8 @@ class ContentGeneratorBot:
             self.logger.error(f"❌ Error initializing repositories: {e}")
             self.repositories = {}
 
+    # app/bot/bot.py - в методе _initialize_services
+
     async def _initialize_services(self):
         """Инициализация сервисов"""
         from app.services.openai_service import OpenAIService
@@ -76,13 +78,24 @@ class ContentGeneratorBot:
         from app.services.prompt_service import PromptService
         from app.services.mpstats_scraper_service import MPStatsScraperService
         from app.services.data_collection_service import DataCollectionService
+
         try:
             openai_service = OpenAIService()
             mpstats_service = MPStatsService()
             content_service = ContentService(mpstats_service, openai_service)
             prompt_service = PromptService()
             scraper_service = MPStatsScraperService(self.config)
-            data_collection_service = DataCollectionService(self.config, scraper_service)
+
+            # Создаем data_collection_service с services в kwargs
+            data_collection_service = DataCollectionService(
+                config=self.config,
+                scraper_service=scraper_service,
+                services={  # Передаем как именованный аргумент
+                    'openai': openai_service,
+                    'prompt': prompt_service,
+                    'content': content_service
+                }
+            )
 
             self.services = {
                 'openai': openai_service,
