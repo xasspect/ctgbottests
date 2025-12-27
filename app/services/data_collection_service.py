@@ -246,7 +246,8 @@ class DataCollectionService:
             category: str,
             purposes: List[str],
             additional_params: List[str],
-            category_description: str = None
+            category_description: str = None,
+            max_keywords: int = 25
     ) -> Dict[str, Any]:
         """Обработка Excel файла через KeywordsProcessor с GPT-фильтрацией"""
         try:
@@ -291,7 +292,7 @@ class DataCollectionService:
                     filter_processor = JSONKeywordFilter(openai_service, prompt_service)
 
                     # Фильтруем ключевые слова до 10 самых релевантных
-                    filtered_data = await filter_processor.filter_keywords_gpt(data, max_keywords=10)
+                    filtered_data = await filter_processor.filter_keywords_gpt(data, max_keywords)
 
                     # Сохраняем результат
                     data = filtered_data
@@ -299,10 +300,10 @@ class DataCollectionService:
                         f"✅ GPT-фильтрация завершена! Оставлено {len(data.get('keywords', []))} ключевых слов")
                 except Exception as e:
                     self.logger.error(f"❌ Ошибка GPT-фильтрации: {e}")
-                    data = self._simple_keyword_filter(data, max_keywords=10)
+                    data = self._simple_keyword_filter(data, max_keywords)
             else:
                 self.logger.warning("⚠️ Сервисы не доступны, использую простую фильтрацию")
-                data = self._simple_keyword_filter(data, max_keywords=10)
+                data = self._simple_keyword_filter(data, max_keywords)
 
             # Сохраняем обновленные данные
             with open(json_path, 'w', encoding='utf-8') as f:
@@ -344,7 +345,7 @@ class DataCollectionService:
             return None
 
 
-    def _simple_keyword_filter(self, data: Dict[str, Any], max_keywords: int = 10) -> Dict[str, Any]:
+    def _simple_keyword_filter(self, data: Dict[str, Any], max_keywords: int = 25) -> Dict[str, Any]:
         """Простая фильтрация ключевых слов без GPT"""
         if "keywords" in data and data["keywords"]:
             all_keywords = data["keywords"]

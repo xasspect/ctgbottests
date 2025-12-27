@@ -572,18 +572,10 @@ class MPStatsScraperService:
         # 2. Описание категории (из БД)
         category_description = params.get('category_description', '').strip()
         if category_description:
-            logger.info(f"📋 Описание категории получено: {category_description[:50]}...")
-            # Очищаем описание от лишних символов и добавляем ключевые слова
-            # Удаляем пунктуацию, оставляем только слова
-            import re
-            clean_description = re.sub(r'[^\w\s]', ' ', category_description)
-            description_words = clean_description.split()
-
-            # Берем первые 5-7 ключевых слов из описания (слова длиной > 3 символов)
-            important_words = [word for word in description_words if len(word) > 3][:7]
-            if important_words:
-                logger.info(f"✅ Ключевые слова из описания: {important_words}")
-                parts.extend(important_words)
+            logger.info(f"📋 Описание категории получено: {category_description[:100]}...")
+            # Добавляем описание целиком
+            parts.append(category_description)
+            logger.info(f"✅ Добавлено полное описание категории ({len(category_description)} символов)")
         else:
             logger.warning("⚠️ Описание категории не было передано или пустое")
 
@@ -614,16 +606,23 @@ class MPStatsScraperService:
 
         # Если есть purpose строка
         if purpose:
-            # Пробуем найти русский перевод
-            purpose_clean = purpose_map.get(purpose.lower(), purpose)
-            purpose_clean = self._clean_purpose_text(purpose_clean)
-            if purpose_clean:
-                parts.append(purpose_clean)
-                logger.info(f"✅ Добавлено назначение из purpose: {purpose_clean}")
+            logger.info(f"🎯 Обработка purpose как строки: '{purpose}'")
+
+            # Разбиваем строку если есть разделители
+            if "," in purpose:
+                purpose_items = [p.strip() for p in purpose.split(",") if p.strip()]
+            else:
+                purpose_items = [purpose.strip()]
+
+            # Переводим каждый элемент
+            for p in purpose_items:
+                translated = purpose_map.get(p.lower(), p)
+                parts.append(translated)
+                logger.info(f"✅ Добавлено назначение (переведено): {translated}")
 
         # Если есть purposes массив
         elif isinstance(purposes, list) and purposes:
-            for p in purposes[:3]:  # Берем максимум 3 назначения
+            for p in purposes:  # Берем максимум 3 назначения
                 if p and isinstance(p, str):
                     # Пробуем найти русский перевод
                     purpose_clean = purpose_map.get(p.lower(), p)
@@ -642,7 +641,7 @@ class MPStatsScraperService:
 
             # Если это список, берем первые 3 непустых элемента
             if isinstance(additional_params, list):
-                for param in additional_params[:3]:
+                for param in additional_params:
                     if param and isinstance(param, str):
                         param_clean = param.strip()
                         if param_clean:
@@ -658,9 +657,9 @@ class MPStatsScraperService:
         query_text = " ".join(parts)
 
         # Ограничиваем длину
-        if len(query_text) > 100:
-            query_text = query_text[:97] + "..."
-            logger.info(f"⚠️ Текст запроса обрезан до 100 символов")
+        # if len(query_text) > 100:
+        #     query_text = query_text[:97] + "..."
+        #     logger.info(f"⚠️ Текст запроса обрезан до 100 символов")
 
         logger.info(f"📝 ФИНАЛЬНЫЙ текст запроса: '{query_text}'")
         logger.info(f"📏 Длина: {len(query_text)} символов")

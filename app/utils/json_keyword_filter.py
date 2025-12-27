@@ -27,7 +27,7 @@ class JSONKeywordFilter:
     async def filter_keywords_gpt(
             self,
             json_data: Dict[str, Any],
-            max_keywords: int = 10
+            max_keywords: int = 25
     ) -> Dict[str, Any]:
         """
         Фильтрация ключевых слов через GPT с использованием PromptService

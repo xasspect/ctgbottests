@@ -30,6 +30,7 @@ class GenerationHandler(BaseMessageHandler):
         self.router.message.register(self.show_generate_options, Command(commands=["generate"]))
         self.router.callback_query.register(self.handle_back_to_menu, F.data == "back_to_menu_from_generation")
         self.router.callback_query.register(self.handle_collect_data, F.data.startswith("collect_data_"))
+        self.router.callback_query.register(self.handle_show_generation_menu, F.data.startswith("show_generation_menu_"))
 
     async def handle_collect_data(self, callback: CallbackQuery):
         """Обработка нажатия кнопки 'Собрать данные'"""
@@ -85,6 +86,8 @@ class GenerationHandler(BaseMessageHandler):
                 await status_message.edit_text("❌ Категория не найдена")
                 return
 
+
+
             # Получаем описание категории
             category_description = ""
             if hasattr(category, 'description') and category.description:
@@ -92,10 +95,30 @@ class GenerationHandler(BaseMessageHandler):
             elif hasattr(category, 'hidden_description') and category.hidden_description:
                 category_description = category.hidden_description
 
-            # Запускаем сбор данных с GPT-фильтрацией
+            purposes = []
+            if hasattr(session, 'purposes') and session.purposes:
+                purposes = session.purposes
+
+                # ПЕРЕВОДИМ НА РУССКИЙ ПЕРЕД ПЕРЕДАЧЕЙ В MPStats
+                purpose_map = {
+                    "wood": "под дерево", "with_pattern": "с рисунком", "kitchen": "кухня",
+                    "tile": "плитка", "3d": "3D", "in_roll": "в рулоне",
+                    "self_adhesive": "самоклеящиеся", "stone": "под камень", "bathroom": "ванная",
+                    "bedroom": "спальня", "brick": "под кирпич", "marble": "под мрамор",
+                    "living_room": "гостиная", "white": "белый"
+                }
+
+                translated_purposes = []
+                for p in purposes:
+                    translated = purpose_map.get(str(p).lower(), str(p))
+                    translated_purposes.append(translated)
+
+                purposes = translated_purposes
+                # Запускаем сбор данных с GPT-фильтрацией
             result = await data_collection_service.collect_keywords_data(
                 category=category.name,
-                purpose=session.purposes if hasattr(session, 'purposes') and session.purposes else [],
+                # purpose=session.purposes if hasattr(session, 'purposes') and session.purposes else [],
+                purpose=purposes,
                 additional_params=session.additional_params or [],
                 category_description=category_description
             )
@@ -147,6 +170,7 @@ class GenerationHandler(BaseMessageHandler):
                 # Кнопки для продолжения
                 builder = InlineKeyboardBuilder()
                 builder.button(text="🚀 Сгенерировать заголовок", callback_data=f"generate_title_advanced_{session.id}")
+                builder.button(text="🎯 Меню генерации контента", callback_data=f"show_generation_menu_{session.id}")
                 builder.button(text="📊 Показать все ключевые слова", callback_data=f"show_all_keywords_{session.id}")
                 builder.button(text="↩️ Изменить параметры", callback_data="change_params")
                 builder.adjust(1)
@@ -162,6 +186,17 @@ class GenerationHandler(BaseMessageHandler):
         except Exception as e:
             await status_message.edit_text(f"❌ <b>Ошибка при сборе данных:</b>\n{str(e)[:200]}")
             self.logger.error(f"Ошибка сбора данных: {e}", exc_info=True)
+
+    async def handle_show_generation_menu(self, callback: CallbackQuery):
+        """Показать меню генерации контента"""
+        session_id = callback.data.replace("show_generation_menu_", "")
+
+        # Используем ContentGenerationHandler
+        from app.bot.handlers.content_generation_handler import ContentGenerationHandler
+        generation_handler = ContentGenerationHandler(self.config, self.services, self.repositories)
+
+        await generation_handler.show_generation_menu(callback.message, session_id)
+        await callback.answer()
 
     async def handle_show_all_keywords(self, callback: CallbackQuery):
         """Показать все ключевые слова (оригинальные и отфильтрованные)"""

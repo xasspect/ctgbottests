@@ -4,6 +4,8 @@ import asyncio
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+
+from app.bot.handlers.content_generation_handler import ContentGenerationHandler
 from app.config.config import config
 from app.bot.handlers.start_handler import StartHandler
 from app.bot.handlers.category_handler import CategoryHandler
@@ -137,7 +139,7 @@ class ContentGeneratorBot:
             GenerationHandler(self.config, self.services, self.repositories),
             SessionHandler(self.config, self.services, self.repositories),
             AdminHandler(self.config, self.services, self.repositories),
-
+            ContentGenerationHandler(self.config, self.services, self.repositories),
         ]
 
         for handler in self.handlers:
