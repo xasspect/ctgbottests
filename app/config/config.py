@@ -246,8 +246,8 @@ class Config:
         self.generation = GenerationConfig(
             max_keywords=int(os.getenv('MAX_KEYWORDS', '50')),
             max_title_length=int(os.getenv('MAX_TITLE_LENGTH', '60')),
-            max_short_desc_length=int(os.getenv('MAX_SHORT_DESC_LENGTH', '200')),
-            max_long_desc_length=int(os.getenv('MAX_LONG_DESC_LENGTH', '500')),
+            max_short_desc_length=int(os.getenv('MAX_SHORT_DESC_LENGTH', '800')),
+            max_long_desc_length=int(os.getenv('MAX_LONG_DESC_LENGTH', '3000')),
             title_generation_attempts=int(os.getenv('TITLE_GENERATION_ATTEMPTS', '3')),
             description_generation_attempts=int(os.getenv('DESCRIPTION_GENERATION_ATTEMPTS', '3')),
             simple_generation_enabled=self._get_bool('SIMPLE_GENERATION_ENABLED', True),

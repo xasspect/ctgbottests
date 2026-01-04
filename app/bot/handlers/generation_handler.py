@@ -32,6 +32,45 @@ class GenerationHandler(BaseMessageHandler):
         self.router.callback_query.register(self.handle_collect_data, F.data.startswith("collect_data_"))
         self.router.callback_query.register(self.handle_show_generation_menu, F.data.startswith("show_generation_menu_"))
 
+    # В class GenerationHandler добавьте:
+
+
+    async def _get_generation_content(self, session) -> str:
+        """Получить контент для генерации"""
+        content = ""
+
+        if session.current_step == "data_collected":
+            content = "📊 <b>Данные собраны!</b>\n\n"
+            content += f"🔑 Ключевых слов: {len(session.keywords or [])}\n"
+            content += f"🎯 Назначения: {self._get_purposes_display_text(session)}\n"
+            content += "\nЧто делаем дальше?"
+
+        elif session.current_step == "title_generated":
+            content = "📝 <b>Заголовок сгенерирован:</b>\n\n"
+            content += f"<code>{session.generated_title}</code>\n\n"
+            content += "Принимаем заголовок?"
+
+        return content
+
+    async def _get_generation_keyboard(self, session) -> InlineKeyboardBuilder:
+        """Получить клавиатуру для генерации"""
+        builder = InlineKeyboardBuilder()
+
+        if session.current_step == "data_collected":
+            builder.button(text="🚀 Сгенерировать заголовок", callback_data=f"generate_title_{session.id}")
+            builder.button(text="🔍 Собрать другие данные", callback_data=f"collect_data_{session.id}")
+            builder.button(text="↩️ Назад", callback_data="back_to_params")
+            builder.button(text="❌ Отмена", callback_data="cancel_action")
+
+        elif session.current_step == "title_generated":
+            builder.button(text="✅ Принять", callback_data=f"approve_title_{session.id}")
+            builder.button(text="🔄 Перегенерировать", callback_data="regenerate_title")
+            builder.button(text="📝 Изменить параметры", callback_data="change_params")
+            builder.button(text="❌ Отмена", callback_data="cancel_action")
+
+        builder.adjust(2)
+        return builder
+
     async def handle_collect_data(self, callback: CallbackQuery):
         """Обработка нажатия кнопки 'Собрать данные'"""
         session_id = callback.data.replace("collect_data_", "")
