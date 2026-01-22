@@ -7,14 +7,14 @@ MPSTATS_UI_CONFIG = {
         "password_field": {"by": "NAME", "value": "mpstats-login-form-password"}
     },
     "tabs": {
-        "requests": {"by": "XPATH", "value": "//*[contains(@class, 'pqQVD')]"},
-        "words": {"by": "XPATH", "value": "//*[contains(@class, 'pqQVD')]"}
+        "requests": {"by": "XPATH", "value": "//*[contains(@class, 'fQr_O')]"},
+        "words": {"by": "XPATH", "value": "//*[contains(@class, 'fQr_O')]"}
     },
     "forms": {
         "textarea": {"by": "TAG_NAME", "value": "textarea"},
-        "find_queries_btn": {"by": "CSS_SELECTOR", "value": ".whAjj.M_JA1"}
+        "find_queries_btn": {"by": "CSS_SELECTOR", "value": ".IgttE.JDm7X"}
     },
     "download": {
-        "download_btn": {"by": "CSS_SELECTOR", "value": ".whAjj.M_JA1"}
+        "download_btn": {"by": "CSS_SELECTOR", "value": ".IgttE.JDm7X"}
     }
 }
