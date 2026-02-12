@@ -167,6 +167,7 @@ class ChromeDriverManager:
 
         # Основные флаги для обхода детекции
         chrome_flags = [
+            "--headless=new"    
             "--no-sandbox",
             "--disable-dev-shm-usage",
             "--disable-gpu",

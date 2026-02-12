@@ -515,7 +515,7 @@ class MPStatsScraperService:
 
 
             # 6. Ждем некоторое время для обработки
-            time.sleep(20)
+            time.sleep(40)
 
             return {
                 "success": True,

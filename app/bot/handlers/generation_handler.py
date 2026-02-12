@@ -188,15 +188,6 @@ class GenerationHandler(BaseMessageHandler):
                     elif purposes_list:
                         message_text += f"🎯 <b>Назначение:</b> {purposes_list}\n"
 
-                # Информация о фильтрации
-                original_count = result.get('original_keywords_count', 0)
-                filtered_count = result.get('filtered_keywords_count', len(filtered_keywords))
-                filtering_method = result.get('filtering_method', 'unknown')
-
-                message_text += f"\n📊 <b>Статистика фильтрации:</b>\n"
-                message_text += f"• Собрано: {original_count} ключевых слов\n"
-                message_text += f"• Отфильтровано GPT: {filtered_count} ключевых слов\n"
-                message_text += f"• Метод: {filtering_method}\n\n"
 
                 # Показываем отфильтрованные ключевые слова
                 if filtered_keywords:
@@ -331,30 +322,8 @@ class GenerationHandler(BaseMessageHandler):
                 purposes_text = session.purpose
 
             if not prompt_service:
-                user_prompt = f"""
-                Создай продающий заголовок для товара на маркетплейсе со следующими параметрами:
-
-                Категория: {category.name}
-                Назначения товара: {purposes_text}
-                Дополнительные параметры: {', '.join(session.additional_params) if session.additional_params else 'нет'}
-
-                Требования к заголовку:
-                1. Максимально продающий и привлекательный
-                2. Включает основные преимущества товара
-                3. Соответствует категории "{category.name}"
-                4. Учитывает все назначения: {purposes_text}
-                5. Оптимизирован для поиска на маркетплейсе
-                6. Длина от 5 до 10 слов
-                7. Не используй HTML теги
-                8. Пиши на русском языке
-                9. Не используй специальные символы "!, :, ^, )" и т.д.
-                10. Дополнительные параметры должны привлекательно встраиваться в заголовок
-                11. Ты создаешь заголовок в карточке товара на маркетплейсе
-                """
-                system_prompt = """
-                Ты профессиональный копирайтер для маркетплейсов Wildberries и OZON.
-                Создавай продающие, естественные заголовки для товаров.
-                """
+                await msg.edit_text("❌ fakdfjalkfj")
+                return
             else:
                 user_prompt = prompt_service.get_title_prompt(
                     category.name,

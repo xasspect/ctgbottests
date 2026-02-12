@@ -4,6 +4,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.bot.handlers.base_handler import BaseMessageHandler
+from app.config.config import config
 
 
 class ContentGenerationHandler(BaseMessageHandler):
@@ -170,115 +171,138 @@ class ContentGenerationHandler(BaseMessageHandler):
                 await callback.message.answer("❌ Сервис промптов не найден")
                 return
 
-            # Выбираем нужный промпт
-            if generation_type == "title" and marketplace == "wb":
-                system_prompt, user_prompt = prompt_service.get_wb_title_prompt(
-                    category=data['category'],
-                    purposes=data['purposes'],
-                    additional_params=data['additional_params'],
-                    keywords=data['keywords']
-                )
-                result_type = "заголовок Wildberries"
-
-            elif generation_type == "short_desc" and marketplace == "wb":
-                system_prompt, user_prompt = prompt_service.get_wb_short_desc_prompt(
-                    category=data['category'],
-                    purposes=data['purposes'],
-                    additional_params=data['additional_params'],
-                    keywords=data['keywords']
-                )
-                result_type = "краткое описание Wildberries"
-
-            elif generation_type == "long_desc" and marketplace == "wb":
-                system_prompt, user_prompt = prompt_service.get_wb_long_desc_prompt(
-                    category=data['category'],
-                    purposes=data['purposes'],
-                    additional_params=data['additional_params'],
-                    keywords=data['keywords']
-                )
-                result_type = "полное описание Wildberries"
-
-            elif generation_type == "title" and marketplace == "ozon":
-                system_prompt, user_prompt = prompt_service.get_ozon_title_prompt(
-                    category=data['category'],
-                    purposes=data['purposes'],
-                    additional_params=data['additional_params'],
-                    keywords=data['keywords']
-                )
-                result_type = "SEO-название Ozon"
-
-            elif generation_type == "desc" and marketplace == "ozon":
-                system_prompt, user_prompt = prompt_service.get_ozon_desc_prompt(
-                    category=data['category'],
-                    purposes=data['purposes'],
-                    additional_params=data['additional_params'],
-                    keywords=data['keywords']
-                )
-                result_type = "SEO-описание Ozon"
-            else:
-                await callback.message.answer("❌ Неизвестный тип генерации")
-                return
-
-            # Генерируем контент через OpenAI
+            # Получаем OpenAI сервис
             openai_service = self.services.get('openai')
             if not openai_service:
                 await callback.message.answer("❌ Сервис OpenAI не найден")
                 return
 
             # Показываем сообщение о начале генерации
-            status_msg = await callback.message.answer(f"🤖 <b>Генерирую {result_type}...</b>")
+            status_msg = await callback.message.answer(f"🤖 <b>Генерирую контент...</b>")
 
-            # Устанавливаем max_tokens в зависимости от типа контента
-            max_tokens = {
-                "title": 100,
-                "short_desc": 500,
-                "long_desc": 1000,
-                "desc": 1200
-            }.get(generation_type, 500)
+            try:
+                # Выбираем нужный промпт и вызываем соответствующий метод
+                if generation_type == "title" and marketplace == "wb":
+                    system_prompt, user_prompt = prompt_service.get_wb_title_prompt(
+                        category=data['category'],
+                        purposes=data['purposes'],
+                        additional_params=data['additional_params'],
+                        keywords=data['keywords']
+                    )
 
-            content = await openai_service.generate_text(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                max_tokens=max_tokens,
-                temperature=0.7
-            )
+                    # Прямой вызов OpenAI с правильными параметрами
+                    content = await openai_service.generate_text(
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        max_tokens=200,
+                        temperature=0.7
+                    )
+                    result_type = "заголовок Wildberries"
 
-            if not content:
-                await status_msg.edit_text(f"❌ Не удалось сгенерировать {result_type}")
-                return
+                elif generation_type == "short_desc" and marketplace == "wb":
+                    system_prompt, user_prompt = prompt_service.get_wb_short_desc_prompt(
+                        category=data['category'],
+                        purposes=data['purposes'],
+                        additional_params=data['additional_params'],
+                        keywords=data['keywords']
+                    )
 
-            # Показываем результат
-            await status_msg.delete()
+                    content = await openai_service.generate_text(
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        max_tokens=600,
+                        temperature=0.7
+                    )
+                    result_type = "краткое описание Wildberries"
 
-            builder = InlineKeyboardBuilder()
-            builder.button(
-                text="🔄 Сгенерировать заново",
-                callback_data=callback.data
-            )
-            builder.button(
-                text="📋 Скопировать",
-                callback_data=f"copy_{hash(content)}"
-            )
-            builder.button(
-                text="🎯 Другой тип контента",
-                callback_data=f"back_to_generation_menu"
-            )
-            builder.adjust(1)
+                elif generation_type == "long_desc" and marketplace == "wb":
+                    system_prompt, user_prompt = prompt_service.get_wb_long_desc_prompt(
+                        category=data['category'],
+                        purposes=data['purposes'],
+                        additional_params=data['additional_params'],
+                        keywords=data['keywords']
+                    )
 
-            # Форматируем вывод
-            if generation_type == "title":
-                display_text = f"<b>📝 {result_type}:</b>\n\n<code>{content}</code>\n\n"
-                display_text += f"📏 <b>Длина:</b> {len(content)} символов\n"
-                display_text += f"🔤 <b>Слов:</b> {len(content.split())}"
-            else:
-                display_text = f"<b>📄 {result_type}:</b>\n\n{content}\n\n"
-                display_text += f"📏 <b>Длина:</b> {len(content)} символов"
+                    content = await openai_service.generate_text(
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        max_tokens=1200,
+                        temperature=0.7
+                    )
+                    result_type = "полное описание Wildberries"
 
-            await callback.message.answer(display_text, reply_markup=builder.as_markup())
+                elif generation_type == "title" and marketplace == "ozon":
+                    system_prompt, user_prompt = prompt_service.get_ozon_title_prompt(
+                        category=data['category'],
+                        purposes=data['purposes'],
+                        additional_params=data['additional_params'],
+                        keywords=data['keywords']
+                    )
+
+                    content = await openai_service.generate_text(
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        max_tokens=200,
+                        temperature=0.7
+                    )
+                    result_type = "SEO-название Ozon"
+
+                elif generation_type == "desc" and marketplace == "ozon":
+                    system_prompt, user_prompt = prompt_service.get_ozon_desc_prompt(
+                        category=data['category'],
+                        purposes=data['purposes'],
+                        additional_params=data['additional_params'],
+                        keywords=data['keywords']
+                    )
+
+                    content = await openai_service.generate_text(
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        max_tokens=1200,
+                        temperature=0.7
+                    )
+                    result_type = "SEO-описание Ozon"
+                else:
+                    await status_msg.edit_text("❌ Неизвестный тип генерации")
+                    return
+
+                # Удаляем статус сообщение
+                await status_msg.delete()
+
+                # Создаем клавиатуру
+                builder = InlineKeyboardBuilder()
+                builder.button(
+                    text="🔄 Сгенерировать заново",
+                    callback_data=callback.data
+                )
+                builder.button(
+                    text="📋 Скопировать",
+                    callback_data=f"copy_{hash(content)}"
+                )
+                builder.button(
+                    text="🎯 Другой тип контента",
+                    callback_data=f"back_to_generation_menu"
+                )
+                builder.adjust(1)
+
+                # Форматируем вывод
+                if generation_type == "title":
+                    display_text = f"<b>📝 {result_type}:</b>\n\n<code>{content}</code>\n\n"
+                    display_text += f"📏 <b>Длина:</b> {len(content)} символов\n"
+                    display_text += f"🔤 <b>Слов:</b> {len(content.split())}"
+                else:
+                    display_text = f"<b>📄 {result_type}:</b>\n\n{content}\n\n"
+                    display_text += f"📏 <b>Длина:</b> {len(content)} символов"
+
+                await callback.message.answer(display_text, reply_markup=builder.as_markup())
+
+            except Exception as e:
+                await status_msg.edit_text(f"❌ Ошибка генерации: {str(e)[:200]}")
+                self.logger.error(f"Ошибка генерации контента: {e}")
 
         except Exception as e:
-            self.logger.error(f"Ошибка генерации контента: {e}")
-            await callback.message.answer(f"❌ Ошибка генерации: {str(e)[:200]}")
+            self.logger.error(f"Ошибка в _generate_content: {e}")
+            await callback.message.answer(f"❌ Ошибка: {str(e)[:200]}")
 
     # Обработчики для каждой кнопки
     async def handle_generate_wb_title(self, callback: CallbackQuery):
@@ -308,6 +332,19 @@ class ContentGenerationHandler(BaseMessageHandler):
 
     async def handle_back_to_generation_menu(self, callback: CallbackQuery):
         """Возврат к меню генерации"""
-        # Получаем session_id из предыдущего сообщения
-        # Нужно будет доработать логику сохранения session_id
-        await callback.answer("Функция в разработке")
+        # Извлекаем session_id из предыдущего сообщения
+        # Можно сохранять session_id в данных кнопки или использовать другой подход
+        try:
+            # Получаем session_id из callback.data (может быть в тексте кнопки)
+            # Или используем активную сессию пользователя
+            user_id = callback.from_user.id
+            session_repo = self.repositories['session_repo']
+            session = session_repo.get_active_session(user_id)
+
+            if session:
+                await self.show_generation_menu(callback.message, session.id)
+            else:
+                await callback.answer("❌ Сессия не найдена")
+        except Exception as e:
+            self.logger.error(f"Ошибка возврата в меню генерации: {e}")
+            await callback.answer("❌ Ошибка возврата")

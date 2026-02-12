@@ -115,7 +115,7 @@ class Database:
                         ),
                         Category(
                             id="soft_panels",
-                            name="Мякиши",
+                            name="Мягкие звукопоглощающие панели",
                             hidden_description="мягкие панели нестандартных размеров",
                             description="Мягкие звукопоглощающие панели",
                             purposes={
@@ -150,7 +150,7 @@ class Database:
                         ),
                         Category(
                             id="pet_panels",
-                            name="ПЭТы",
+                            name="Самоклеящиеся ПЭТ панели",
                             hidden_description="самоклеящиеся ПВХ панели",
                             description="Самоклеящиеся ПЭТ панели",
                             purposes={
@@ -168,7 +168,7 @@ class Database:
                         ),
                         Category(
                             id="baby_panels",
-                            name="Малышарики",
+                            name="Декоративные 3D панели малого формата",
                             hidden_description="маленькие декоративные чаще всего 3д панели 29 на 29 см",
                             description="Декоративные 3D панели малого формата",
                             purposes={
@@ -181,7 +181,7 @@ class Database:
                         ),
                         Category(
                             id="aprons",
-                            name="Фартуки",
+                            name="Кухонные фартуки из пластика",
                             hidden_description="пластиковые фартуки на кухню",
                             description="Кухонные фартуки из пластика",
                             purposes={
@@ -198,7 +198,7 @@ class Database:
                         ),
                         Category(
                             id="3d_panels",
-                            name="3Д панели",
+                            name="Объемные 3D панели для стен",
                             hidden_description="",
                             description="Объемные 3D панели для стен",
                             purposes={
@@ -211,7 +211,7 @@ class Database:
                         ),
                         Category(
                             id="battens",
-                            name="Рейки",
+                            name="Реечные панели под дерево",
                             hidden_description="панели под дерево реечные",
                             description="Реечные панели под дерево",
                             purposes={

@@ -41,7 +41,7 @@ class APIConfig:
     mpstats_base_url: str = "https://mpstats.io/api"
     mpstats_delay: float = 1.0
     mpstats_timeout: int = 30
-    openai_model: str = "gpt-3.5-turbo"
+    openai_model: str = "gpt-4o-mini"
     openai_max_tokens: int = 2000
     openai_temperature: float = 0.7
     openai_timeout: int = 30  # Таймаут для OpenAI API
@@ -213,8 +213,8 @@ class Config:
             mpstats_base_url=os.getenv('MPSTATS_BASE_URL', 'https://mpstats.io/api'),
             mpstats_delay=float(os.getenv('MPSTATS_REQUEST_DELAY', '1.0')),
             mpstats_timeout=int(os.getenv('MPSTATS_TIMEOUT', '30')),
-            openai_model=os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo'),
-            openai_max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '2000')),
+            openai_model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),  # ИЗМЕНЕНО
+            openai_max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '4000')),  # Увеличен лимит
             openai_temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.7')),
             openai_timeout=int(os.getenv('OPENAI_TIMEOUT', '30'))
         )
