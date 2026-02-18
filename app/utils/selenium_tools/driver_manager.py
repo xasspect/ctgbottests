@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class ChromeDriverManager:
     """Управление Chrome драйвером с настройками для скачивания файлов, блокировкой медиа и stealth режимом."""
 
-    def __init__(self, headless: bool = False, use_stealth: bool = True):
+    def __init__(self, headless: bool = True, use_stealth: bool = True):
         """
         Инициализация менеджера Chrome драйвера.
 
@@ -33,6 +33,8 @@ class ChromeDriverManager:
         self.use_stealth = use_stealth and HAS_STEALTH
         self.driver = None
         logger.info(f"ChromeDriverManager initialized: headless={headless}, stealth={self.use_stealth}")
+        self.use_remote = os.getenv('USE_REMOTE_DRIVER', 'false').lower() == 'true'
+        self.remote_url = os.getenv('SELENIUM_REMOTE_URL', 'http://localhost:4444/wd/hub')
 
     def get_downloaded_files(self, download_dir: Optional[str] = None):
         """
@@ -155,174 +157,33 @@ class ChromeDriverManager:
             user_agent: Optional[str],
             proxy: Optional[str]
     ) -> ChromeOptions:
-        """
-        Настраивает опции Chrome для обхода детекции.
-
-        Returns:
-            Настроенные ChromeOptions
-        """
         chrome_options = ChromeOptions()
 
-        chrome_options.add_argument(f"user-data-dir={user_data_dir}")
+        # Базовые флаги для работы в контейнере
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--remote-debugging-port=9222")
 
-        # Основные флаги для обхода детекции
-        chrome_flags = [
-            "--headless=new"    
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--window-size=1920,1080",
-
-            # Флаги для обхода детекции автоматизации
-            "--disable-blink-features=AutomationControlled",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--disable-web-security",
-            "--allow-running-insecure-content",
-
-            # Отключаем ненужные функции
-            "--disable-features=MediaRouter",
-            "--disable-component-update",
-            "--disable-background-networking",
-            "--disable-default-apps",
-            "--disable-extensions",
-            "--disable-sync",
-            "--metrics-recording-only",
-            "--disable-client-side-phishing-detection",
-            "--disable-hang-monitor",
-            "--disable-prompt-on-repost",
-            "--disable-domain-reliability",
-            "--disable-renderer-backgrounding",
-            "--disable-backgrounding-occluded-windows",
-            "--disable-ipc-flooding-protection",
-            "--disable-notifications",
-            "--disable-popup-blocking",
-            "--disable-site-isolation-trials",
-            "--disable-logging",
-            "--disable-breakpad",
-            "--disable-software-rasterizer",
-            "--disable-features=VizDisplayCompositor",
-        ]
-
-        # Специальные флаги для обхода детекции
-        chrome_flags.extend([
-            "--disable-blink-features=AutomationControlled",
-            "--use-fake-ui-for-media-stream",  # Обход запроса разрешений
-            "--use-fake-device-for-media-stream",  # Использование фейковых устройств
-            "--disable-features=UserAgentClientHint",  # Отключаем Client Hints
-            "--disable-webrtc",  # Отключаем WebRTC для скрытия IP
-            "--disable-webrtc-hw-encoding",
-            "--disable-webrtc-hw-decoding",
-            "--disable-databases",
-            "--disable-local-storage",
-            "--disable-appcache",
-            "--disable-file-system",
-            "--enable-features=NetworkService,NetworkServiceInProcess",
-        ])
-
-        # Флаги для блокировки медиа
-        if block_videos:
-            chrome_flags.extend([
-                "--autoplay-policy=no-user-gesture-required",
-                "--disable-features=PreloadMediaEngagementData,AutoplayIgnoreWebAudio,MediaSession",
-                "--disable-background-video-track",
-                "--disable-pepper-3d",
-                "--disable-pepper-3d-image-chromium",
-            ])
-
-        if block_sounds:
-            chrome_flags.extend([
-                "--mute-audio",
-                "--disable-audio-output",
-            ])
-
-        if block_animations:
-            chrome_flags.extend([
-                "--force-prefers-reduced-motion",
-            ])
-
-        # Добавляем флаги в опции
-        for flag in chrome_flags:
-            chrome_options.add_argument(flag)
-
-        if self.headless:
-            chrome_options.add_argument("--headless=new")
-            # Дополнительные флаги для headless режима
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--remote-debugging-port=9222")
-            chrome_options.add_argument("--remote-debugging-address=0.0.0.0")
-
-        # Настраиваем User-Agent
+        # User-Agent (если не задан, ставим стандартный)
         if not user_agent:
-            # Современный Chrome User-Agent для Windows
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
         chrome_options.add_argument(f"user-agent={user_agent}")
 
-        if proxy:
-            chrome_options.add_argument(f'--proxy-server={proxy}')
-
-        # Настройки для скачивания файлов
+        # Настройки загрузок
         prefs = {
             "download.default_directory": download_dir,
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
             "safebrowsing.enabled": False,
-            "safebrowsing.disable_download_protection": True,
-            "profile.default_content_settings.popups": 0,
-            "profile.default_content_setting_values.automatic_downloads": 1,
-            "profile.default_content_setting_values.notifications": 2,
-
-            # Важно: отключаем предложение "Сохранить как..."
-            "profile.content_settings.pattern_pairs.*.multiple-automatic-downloads": 1,
-
-            # Настройки для обхода детекции
-            "credentials_enable_service": False,
-            "profile.password_manager_enabled": False,
-            "webrtc.ip_handling_policy": "disable_non_proxied_udp",
-            "webrtc.multiple_routes_enabled": False,
-            "webrtc.nonproxied_udp_enabled": False,
         }
-
-        # Блокировка медиа через настройки контента
-        if block_videos:
-            prefs.update({
-                "profile.default_content_setting_values.plugins": 2,
-                "profile.default_content_setting_values.media_stream": 2,
-                "profile.default_content_setting_values.media_playback": 2,
-                "profile.content_settings.exceptions.plugins.*.setting": 2,
-            })
-
-        if block_images:
-            prefs["profile.default_content_setting_values.images"] = 2
-
-        if disable_javascript:
-            prefs["profile.default_content_setting_values.javascript"] = 2
-
         chrome_options.add_experimental_option("prefs", prefs)
 
-        # Критически важные опции для обхода детекции
-        chrome_options.add_experimental_option("excludeSwitches", [
-            "enable-automation",
-            "enable-logging",
-            "load-extension",
-            "test-type",
-            "ignore-certificate-errors",
-            "disable-background-networking",
-            "disable-default-apps",
-            "disable-extensions",
-            "disable-sync",
-            "disable-translate",
-            "metrics-recording-only",
-        ])
-
+        # Минимальное скрытие автоматизации
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
-
-        # Дополнительные опции для обхода защиты
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_argument('--disable-web-security')
-        chrome_options.add_argument('--allow-running-insecure-content')
-        chrome_options.add_argument('--disable-site-isolation-trials')
 
         return chrome_options
 

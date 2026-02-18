@@ -183,7 +183,7 @@ class MPStatsScraperService:
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
         self.driver_manager = ChromeDriverManager(
-            headless=False,
+            headless=True,
             use_stealth=True
         )
 
