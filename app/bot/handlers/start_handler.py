@@ -26,8 +26,13 @@ class StartHandler(BaseMessageHandler):
         self.router.callback_query.register(self.handle_back_to_menu, F.data == "back_to_main_menu")
 
     async def start(self, message: Message):
-        """Обработка команды /start и показ главного меню"""
+        """Обработка команды /start с проверкой доступа"""
         user_id = message.from_user.id
+
+        # Проверяем, есть ли пользователь в списке администраторов
+        if user_id not in self.config.telegram.admin_ids:
+            await message.answer("⛔ У вас нет доступа к этому боту.")
+            return
 
         # Создаем пользователя, если его нет
         user_repo = self.repositories['user_repo']
@@ -66,11 +71,7 @@ class StartHandler(BaseMessageHandler):
         builder.button(text="📖 Помощь", callback_data="help_button")
         builder.button(text="ℹ️ О боте", callback_data="about_button")
 
-        # Добавляем кнопку админа, если пользователь админ
-        if user and (user.id == self.config.telegram.admin_id or user.role == 'admin'):
-            builder.button(text="👑 Админ", callback_data="admin_menu")
-
-        builder.adjust(2, 1)  # Располагаем кнопки
+        builder.adjust(2, 1)
 
         welcome_text = """
 🤖 <b>Добро пожаловать в генератор контента для маркетплейсов!</b>
@@ -99,8 +100,6 @@ class StartHandler(BaseMessageHandler):
     async def handle_start_button(self, callback: CallbackQuery):
         """Обработка нажатия кнопки 'Начать'"""
         await callback.answer()
-
-        # Перенаправляем в CategoryHandler для показа категорий
         from app.bot.handlers.category_handler import CategoryHandler
         category_handler = CategoryHandler(self.config, self.services, self.repositories)
         await category_handler.show_categories_command(callback.message)
@@ -143,9 +142,7 @@ class StartHandler(BaseMessageHandler):
     async def handle_back_to_menu(self, callback: CallbackQuery):
         """Возврат в главное меню"""
         await callback.answer()
-
         user_id = callback.from_user.id
         user_repo = self.repositories['user_repo']
         user = user_repo.get_by_telegram_id(user_id)
-
         await self.show_welcome_message(callback.message, user)

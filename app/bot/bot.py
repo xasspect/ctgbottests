@@ -37,6 +37,9 @@ class ContentGeneratorBot:
         database.create_tables()
 
         # Инициализация репозиториев
+
+        await self._sync_admin_users()
+
         await self._initialize_repositories()
 
         # Инициализация сервисов
@@ -48,7 +51,40 @@ class ContentGeneratorBot:
         # Инициализация обработчиков
         await self._initialize_handlers()
 
-        self.logger.info("✅ Bot initialization completed")
+        self.logger.info("Bot initialization completed")
+
+    async def _sync_admin_users(self):
+        """Синхронизирует список администраторов из конфигурации с базой данных."""
+        try:
+            admin_ids = self.config.telegram.admin_ids
+            if not admin_ids:
+                self.logger.info("Нет администраторов для синхронизации")
+                return
+
+            user_repo = self.repositories.get('user_repo')
+            if not user_repo:
+                self.logger.error("Репозиторий пользователей не найден")
+                return
+
+            for admin_id in admin_ids:
+                try:
+                    # Получаем или создаём пользователя, убеждаемся, что роль 'admin'
+                    user = user_repo.get_or_create(
+                        telegram_id=admin_id,
+                        username=f"admin_{admin_id}",
+                        first_name="Admin"
+                    )
+                    if user.role != 'admin':
+                        user_repo.update(user.id, role='admin')
+                        self.logger.info(f"✅ Пользователь {admin_id} повышен до администратора")
+                    else:
+                        self.logger.debug(f"Пользователь {admin_id} уже администратор")
+                except Exception as e:
+                    self.logger.error(f"❌ Ошибка при обработке админа {admin_id}: {e}")
+
+            self.logger.info(f"✅ Синхронизировано {len(admin_ids)} администраторов")
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка синхронизации администраторов: {e}")
 
     async def _initialize_repositories(self):
         """Инициализация репозиториев"""
@@ -65,10 +101,10 @@ class ContentGeneratorBot:
                 'content_repo': ContentRepository(),
             }
 
-            self.logger.info(f"✅ Repositories initialized: {list(self.repositories.keys())}")
+            self.logger.info(f"Repositories initialized: {list(self.repositories.keys())}")
 
         except Exception as e:
-            self.logger.error(f"❌ Error initializing repositories: {e}")
+            self.logger.error(f"Error initializing repositories: {e}")
             self.repositories = {}
 
     # app/bot/bot.py - в методе _initialize_services
@@ -108,7 +144,7 @@ class ContentGeneratorBot:
                 'data_collection': data_collection_service,
             }
 
-            self.logger.info("✅ Все сервисы инициализированы")
+            self.logger.info("Все сервисы инициализированы")
             self.logger.info(f"Available services: {list(self.services.keys())}")
 
         except Exception as e:
@@ -126,9 +162,9 @@ class ContentGeneratorBot:
                 default=DefaultBotProperties(parse_mode=ParseMode.HTML)
             )
             self.dp = Dispatcher()
-            self.logger.info("✅ Aiogram initialized")
+            self.logger.info("Aiogram initialized")
         except Exception as e:
-            self.logger.error(f"❌ Error initializing aiogram: {e}")
+            self.logger.error(f"Error initializing aiogram: {e}")
             raise
 
     async def _initialize_handlers(self):
@@ -145,17 +181,17 @@ class ContentGeneratorBot:
         for handler in self.handlers:
             if handler:
                 await handler.register(self.dp)
-                self.logger.info(f"✅ Registered handler: {handler.__class__.__name__}")
+                self.logger.info(f"Registered handler: {handler.__class__.__name__}")
             else:
-                self.logger.error(f"❌ Handler is None!")
+                self.logger.error(f"Handler is None!")
 
     async def run(self):
         """Запуск бота"""
-        self.logger.info("✅ Starting bot polling...")
+        self.logger.info("Starting bot polling...")
         try:
             await self.dp.start_polling(self.bot)
         except Exception as e:
-            self.logger.error(f"❌ Error in polling: {e}")
+            self.logger.error(f"Error in polling: {e}")
             raise
 
     async def shutdown(self):
@@ -165,14 +201,14 @@ class ContentGeneratorBot:
         try:
             if self.bot:
                 await self.bot.session.close()
-                self.logger.info("✅ Bot session closed")
+                self.logger.info("Bot session closed")
 
             from app.database.database import database
             if database:
                 database.close()
-                self.logger.info("✅ Database connection closed")
+                self.logger.info("Database connection closed")
 
         except Exception as e:
-            self.logger.error(f"❌ Error during shutdown: {e}")
+            self.logger.error(f"Error during shutdown: {e}")
 
         self.logger.info("Bot shutdown completed")

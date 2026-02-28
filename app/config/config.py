@@ -51,7 +51,7 @@ class APIConfig:
 class TelegramConfig:
     """Конфигурация Telegram бота"""
     bot_token: str
-    admin_id: int
+    admin_ids: List[int] = field(default_factory=list)  # список администраторов
     parse_mode: str = "HTML"
     disable_web_page_preview: bool = True
 
@@ -222,10 +222,10 @@ class Config:
         # Telegram
         self.telegram = TelegramConfig(
             bot_token=self._get_required('TELEGRAM_BOT_TOKEN'),
-            admin_id=int(self._get_required('TELEGRAM_ADMIN_ID')),
             parse_mode=os.getenv('TELEGRAM_PARSE_MODE', 'HTML'),
             disable_web_page_preview=self._get_bool('TELEGRAM_DISABLE_PREVIEW', True)
         )
+        self.telegram.admin_ids = self._parse_admin_ids()
 
         # Selenium (с поддержкой Docker)
         self.selenium = SeleniumConfig(
@@ -305,6 +305,26 @@ class Config:
 
         return default_options
 
+    def _parse_admin_ids(self) -> List[int]:
+        """
+        Парсит список администраторов из переменной TELEGRAM_ADMIN_ID.
+        Ожидается строка с ID, разделёнными запятыми (например: "123456,789012").
+        Возвращает список целых чисел. Если переменная не задана или пуста — пустой список.
+        """
+        admin_ids_str = os.getenv('TELEGRAM_ADMIN_ID', '').strip()
+        if not admin_ids_str:
+            print("TELEGRAM_ADMIN_ID не задан, список администраторов пуст.")
+            return []
+
+        ids = []
+        parts = [p.strip() for p in admin_ids_str.split(',') if p.strip()]
+        for part in parts:
+            try:
+                ids.append(int(part))
+            except ValueError:
+                print(f"Некорректный ID в TELEGRAM_ADMIN_ID: '{part}' — пропущен.")
+        return ids
+
     def _get_required(self, key: str) -> str:
         """Получить обязательную переменную окружения"""
         value = os.getenv(key)
@@ -327,7 +347,7 @@ class Config:
         print(f"Docker mode: {self.app.docker_mode}")
         print(f"Debug mode: {self.app.debug}")
         print(f"Database: {self.database.host}:{self.database.port}/{self.database.name}")
-        print(f"Bot: {self.telegram.admin_id}")
+        print(f"Bot: {self.telegram.admin_ids}")
         print(f"OpenAI: {self.api.openai_model}")
         print(f"MPStats: {self.api.mpstats_base_url}")
         print(f"Selenium headless: {self.selenium.headless}")
