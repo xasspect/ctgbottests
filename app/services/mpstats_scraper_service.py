@@ -183,8 +183,8 @@ class MPStatsScraperService:
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
         self.driver_manager = ChromeDriverManager(
-            headless=True,
-            use_stealth=True
+            headless=False,
+            use_stealth=False
         )
 
         stealth_options = {
@@ -292,7 +292,7 @@ class MPStatsScraperService:
                 )
                 if len(elements) > 0:
                     driver.execute_script("arguments[0].click();", elements[0])
-                    self.logger.info("✅ Кликнули на первую кнопку скачивания")
+                    self.logger.info("✅ Кликнули на первую кнопку скачивания 1 в стеке")
                     time.sleep(2)
             except Exception as e:
                 self.logger.warning(f"Не удалось кликнуть первую кнопку: {e}")
@@ -305,8 +305,12 @@ class MPStatsScraperService:
                 )
                 if len(elements) > 2:
                     driver.execute_script("arguments[0].click();", elements[2])
-                    self.logger.info("✅ Кликнули на вторую кнопку скачивания")
+                    self.logger.info("✅ Кликнули на вторую кнопку скачивания 3 в стеке")
                     time.sleep(2)
+                else:
+                    driver.execute_script("arguments[0].click();", elements[1])
+                    self.logger.info("✅ Кликнули на вторую кнопку скачивания 2 в стеке")
+
             except Exception as e:
                 self.logger.warning(f"Не удалось кликнуть вторую кнопку: {e}")
 

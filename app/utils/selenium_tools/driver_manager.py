@@ -160,7 +160,7 @@ class ChromeDriverManager:
         chrome_options = ChromeOptions()
 
         # Базовые флаги для работы в контейнере
-        chrome_options.add_argument("--headless=new")
+        # chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
@@ -188,33 +188,33 @@ class ChromeDriverManager:
         return chrome_options
 
     def _create_driver_with_options(self, chrome_options: ChromeOptions) -> webdriver.Chrome:
-        """
-        Создает драйвер с заданными опциями.
-        """
         try:
-            # Используем уже обновленный драйвер (не вызываем WebDriverManager.install())
             from app.services.chrome_driver_updater import ChromeDriverUpdater
-
             updater = ChromeDriverUpdater()
             driver_path = updater.get_driver_path()
+            logger.info(f"🚀 Путь к ChromeDriver: {driver_path}")
 
-            # Создаем сервис с явным путем к драйверу
+            # Проверка существования файла
+            if not os.path.exists(driver_path):
+                logger.error(f"❌ Файл драйвера не существует: {driver_path}")
+                raise FileNotFoundError(f"ChromeDriver not found at {driver_path}")
+
+            # Логируем все аргументы и опции
+            logger.info(f"📋 Аргументы Chrome: {chrome_options.arguments}")
+            logger.info(f"⚙️ Экспериментальные опции: {chrome_options.experimental_options}")
+
             service = ChromeService(executable_path=driver_path)
-
             driver = webdriver.Chrome(service=service, options=chrome_options)
 
-            # Настраиваем DevTools
             self._configure_devtools(driver)
-
-            # Удаляем признаки автоматизации
             self._remove_automation_flags(driver)
 
             self.driver = driver
-            logger.info("Chrome драйвер успешно создан")
+            logger.info("✅ Chrome драйвер успешно создан")
             return driver
 
         except Exception as e:
-            logger.error(f"Ошибка при создании Chrome драйвера: {e}")
+            logger.error(f"❌ Ошибка при создании Chrome драйвера: {e}", exc_info=True)
             raise
 
     def _apply_stealth_mode(self, driver: webdriver.Chrome, stealth_options: Optional[dict] = None) -> webdriver.Chrome:
