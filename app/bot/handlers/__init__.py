@@ -13,5 +13,4 @@ __all__ = [
     'StartHandler',
     'CategoryHandler',
     # 'GenerationHandler',
-    # 'AdminHandler'
 ]

@@ -1,4 +1,4 @@
-# mpstats_scraper_service.py
+# app/services/mpstats_scraper_service.py
 import asyncio
 import logging
 import random
@@ -38,6 +38,7 @@ class MPStatsScraperService:
         self.find_queries_btn_config = MPSTATS_UI_CONFIG["forms"]["find_queries_btn"]
         self.downloads_config = MPSTATS_UI_CONFIG["download"]["download_btn"]
         self.driver = None
+        self.profile_dir = None  # ДОБАВЛЕНО: для хранения пути к профилю
 
         self.by_mapping = {
             "NAME": By.NAME,
@@ -54,6 +55,12 @@ class MPStatsScraperService:
         """Инициализация скрапера"""
         logger.info("🚀 Инициализация скрапера MPStats с stealth режимом...")
         self.download_dir.mkdir(parents=True, exist_ok=True)
+
+        # ДОБАВЛЕНО: Определяем путь к профилю
+        import app
+        app_dir = os.path.dirname(os.path.dirname(app.__file__))
+        self.profile_dir = os.path.join(app_dir, 'chrome_profile')
+        logger.info(f"📁 Путь к профилю Chrome: {self.profile_dir}")
 
     async def scrape_categories(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -81,7 +88,7 @@ class MPStatsScraperService:
             # 1. Настройка драйвера
             self.driver = await self._setup_driver()
 
-            # 2. Авторизация
+            # 2. Авторизация (будет пропущена если уже есть сессия)
             await self._login_to_mpstats()
 
             # 3. Заполнение формы ключевыми словами
@@ -156,9 +163,6 @@ class MPStatsScraperService:
 
         return {"valid": True, "status": "success"}
 
-    # app/services/mpstats_scraper_service.py
-    # Добавляем в класс MPStatsScraperService:
-
     def cleanup_downloads(self):
         """Очистка временных файлов"""
         try:
@@ -173,8 +177,8 @@ class MPStatsScraperService:
             self.logger.error(f"❌ Ошибка очистки временных файлов: {e}")
 
     async def _setup_driver(self) -> webdriver.Chrome:
-        """Настройка Chrome драйвера с stealth режимом"""
-        import os
+        """Настройка Chrome драйвера с stealth режимом и сохранением профиля"""
+        import app
         from pathlib import Path
 
         # ИСПРАВЛЕНО: Явно указываем путь для скачивания
@@ -182,6 +186,7 @@ class MPStatsScraperService:
         self.download_dir = Path(app_dir) / "downloads" / "mpstats"
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
+        # ИСПРАВЛЕНО: Используем self.driver_manager как класс, а не экземпляр
         self.driver_manager = ChromeDriverManager(
             headless=False,
             use_stealth=False
@@ -205,16 +210,19 @@ class MPStatsScraperService:
 
         user_agent = random.choice(user_agents)
 
+        # ИСПРАВЛЕНО: Используем self.profile_dir для сохранения профиля
         driver = self.driver_manager.create_driver(
-            download_dir=str(self.download_dir),  # Явно передаем путь
+            download_dir=str(self.download_dir),
             block_videos=True,
             block_images=False,
             block_sounds=True,
             user_agent=user_agent,
-            stealth_options=stealth_options
+            stealth_options=stealth_options,
+            profile_dir=self.profile_dir,  # ДОБАВЛЕНО: передаем путь к профилю
+            keep_profile=True  # ДОБАВЛЕНО: сохраняем профиль
         )
 
-        await self._check_download_directory(driver)  # проверка директории для скачивания
+        await self._check_download_directory(driver)
 
         # Случайные задержки
         driver.implicitly_wait(random.uniform(2, 5))
@@ -232,10 +240,7 @@ class MPStatsScraperService:
 
         logger.info(f"✅ Драйвер создан. Размер окна: {width}x{height}")
         logger.info(f"📂 Путь для скачивания: {self.download_dir}")
-
-        # Дополнительная проверка настроек скачивания
-        download_dir_setting = driver.execute_script("return JSON.stringify({download: chrome.downloads})")
-        logger.info(f"Настройки скачивания в браузере: {download_dir_setting}")
+        logger.info(f"📁 Профиль сохранен в: {self.profile_dir}")
 
         return driver
 
@@ -245,7 +250,6 @@ class MPStatsScraperService:
         Возвращает путь к скачанному Excel файлу
         """
         try:
-
             logger.info(f"📂 Ожидаю файл в директории: {self.download_dir}")
             logger.info(f"📂 Абсолютный путь: {os.path.abspath(str(self.download_dir))}")
 
@@ -254,22 +258,13 @@ class MPStatsScraperService:
             with open(test_file, 'w') as f:
                 f.write("Test if directory is writable")
             logger.info(f"✅ Тестовый файл создан: {test_file}")
+
             from selenium.webdriver.common.by import By
             from selenium.webdriver.support.ui import WebDriverWait
             from selenium.webdriver.support import expected_conditions as EC
             import time
 
             self.logger.info("🔄 Начинаю процесс скачивания данных...")
-
-            """
-            !!!
-            НЕЙРОНКА НАГЕНЕРИЛА ХУЙНИ download_keywords_data ВЫЗЫВАЕТСЯ ИЗ /app/services/data_collection_service.py
-            ТАМ БЛЯТЬ НУЖНО НАНИМАТЬ ДЕТЕКТИВА ЧТОБЫ РАЗОБРАТЬСЯ ЧТО И ОТКУДА ВЫЗЫВАЕТСЯ НАХУЙ Я НЕ БУДУ ЭТИМ ЗАНИМАТЬСЯ
-            БУДУЩИЙ Я (РАБ ЭТОЙ ВЕЛИКОЙ КОМПАНИИ) ИЛИ ЧЕЛОВЕК КОТОРОГО НАНЯЛИ РАЗБИРАТЬСЯ В ЭТЙ ЛЕГАСИ ХУЙНИ ДАЙ ТЕБЕ
-            БОГ ЗДОРОВЬЯ
-            
-            олежа энвилоуп 14.12.2025 11:12
-            """
 
             # 2. Переключение на вкладку "Слова"
             try:
@@ -334,7 +329,6 @@ class MPStatsScraperService:
         logger.info(f"⏳ Ожидаю скачивания файла в {self.download_dir}. Таймаут: {timeout}с")
 
         start_time = time.time()
-        # Увеличиваем таймаут, чтобы не прерывать процесс, если файл появляется позже.
         while time.time() - start_time < timeout:
             if not os.path.exists(self.download_dir):
                 await asyncio.sleep(check_interval)
@@ -345,8 +339,7 @@ class MPStatsScraperService:
                 if filename.endswith('.xlsx') or filename.endswith('.xls'):
                     file_path = os.path.join(self.download_dir, filename)
 
-                    # КРИТИЧЕСКИ ВАЖНО: проверяем, что файл больше не скачивается.
-                    # Исключаем временные файлы браузера (обычно .crdownload или .tmp).
+                    # Проверяем, что файл больше не скачивается
                     if filename.endswith('.crdownload') or filename.endswith('.tmp'):
                         logger.debug(f"Файл в процессе скачивания (пропускаем): {filename}")
                         continue
@@ -378,15 +371,18 @@ class MPStatsScraperService:
         return None
 
     async def _login_to_mpstats(self):
-        """Авторизация в MPStats"""
-        logger.info("Авторизация в MPStats...")
+        """Авторизация в MPStats (будет пропущена если уже есть сессия)"""
+        logger.info("Проверка авторизации в MPStats...")
 
         try:
             # Переход на страницу
             self.driver.get('https://mpstats.io/seo/keywords/expanding')
             time.sleep(random.uniform(2, 4))
             current_url = self.driver.current_url
+
+            # Проверяем, нужно ли логиниться
             if 'https://mpstats.io/login' in current_url:
+                logger.info("🔑 Требуется авторизация. Выполняю вход...")
 
                 # Ожидание формы логина
                 WebDriverWait(self.driver, 30).until(
@@ -423,10 +419,13 @@ class MPStatsScraperService:
 
                 time.sleep(random.uniform(2, 4))
                 self.driver.get('https://mpstats.io/seo/keywords/expanding')
-                logger.info("✅ Авторизация успешна")
+                logger.info("✅ Авторизация выполнена и сохранена в профиле")
 
             elif current_url == 'https://mpstats.io/seo/keywords/expanding':
-                logger.info('✅ Вход без логина при помощи chrome_profile')
+                logger.info('✅ Уже авторизован (использован сохраненный профиль)')
+
+            # ДОБАВЛЕНО: Сохраняем куки в файл для проверки
+            self._save_cookies()
 
         except TimeoutException as e:
             logger.error("Таймаут при авторизации")
@@ -434,6 +433,19 @@ class MPStatsScraperService:
         except Exception as e:
             logger.error(f"Ошибка при авторизации: {e}")
             raise Exception(f"Ошибка авторизации: {str(e)}")
+
+    def _save_cookies(self):
+        """Сохраняет куки в файл для отладки"""
+        try:
+            if self.driver:
+                cookies = self.driver.get_cookies()
+                cookies_file = os.path.join(self.profile_dir, 'cookies.json')
+                import json
+                with open(cookies_file, 'w') as f:
+                    json.dump(cookies, f, indent=2)
+                logger.info(f"🍪 Куки сохранены в {cookies_file}")
+        except Exception as e:
+            logger.warning(f"Не удалось сохранить куки: {e}")
 
     async def _fill_keywords_form(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -450,7 +462,7 @@ class MPStatsScraperService:
             logger.info("Поиск вкладки 'Запросы'...")
 
             try:
-                requests_tab = WebDriverWait(self.driver, 15).until(
+                WebDriverWait(self.driver, 15).until(
                     EC.element_to_be_clickable((self.by_mapping[self.requests_btn_config["by"]],
                                                 self.requests_btn_config["value"]))
                 )
@@ -459,10 +471,12 @@ class MPStatsScraperService:
                     self.by_mapping[self.requests_btn_config["by"]],
                     self.requests_btn_config["value"]
                 )
-                elements[1].click()
-                time.sleep(random.uniform(0.3, 0.7))
+                if len(elements) > 1:
+                    elements[1].click()
+                else:
+                    elements[0].click()
 
-                # requests_tab.click()
+                time.sleep(random.uniform(0.3, 0.7))
                 logger.info("✅ Кликнули на вкладку 'Запросы'")
                 time.sleep(random.uniform(1, 2))
 
@@ -474,18 +488,16 @@ class MPStatsScraperService:
                 )
 
                 if requests_tabs:
-                    requests_tabs[1].click()
+                    if len(requests_tabs) > 1:
+                        requests_tabs[1].click()
+                    else:
+                        requests_tabs[0].click()
                     logger.info("✅ Кликнули на альтернативную вкладку 'Запросы'")
                 else:
                     logger.warning("Вкладка 'Запросы' не найдена, продолжаем...")
 
             # 2. Поиск textarea
             logger.info("Поиск textarea...")
-
-            # textarea_tab = WebDriverWait(self.driver, 15).until(
-            #     EC.element_to_be_clickable((self.by_mapping[self.textarea_config["by"]],
-            #                                 self.textarea_config["value"]))
-            # )
 
             textarea = self.driver.find_element(
                 self.by_mapping[self.textarea_config["by"]],
@@ -502,21 +514,22 @@ class MPStatsScraperService:
 
             logger.info(f"Сформирован текст запроса: '{query_text}'")
 
-            # 4. Заполнение textarea
-
+            # 4. Очищаем textarea и заполняем
+            textarea.clear()
             textarea.send_keys(query_text)
-
 
             logger.info("✅ Textarea заполнена")
             time.sleep(3)
+
             # 5. Нажимаем "Подобрать запросы"
-            element = self.driver.find_element(self.by_mapping[self.find_queries_btn_config["by"]],
-                                               self.find_queries_btn_config["value"])
+            element = self.driver.find_element(
+                self.by_mapping[self.find_queries_btn_config["by"]],
+                self.find_queries_btn_config["value"]
+            )
             # клик по кнопке игнорирую фокус
             self.driver.execute_script("arguments[0].click();", element)
 
             logger.info("✅ Форма отправлена (клик по кнопке 'Подобрать запросы')")
-
 
             # 6. Ждем некоторое время для обработки
             time.sleep(40)
@@ -577,18 +590,12 @@ class MPStatsScraperService:
         category_description = params.get('category_description', '').strip()
         if category_description:
             logger.info(f"📋 Описание категории получено: {category_description[:100]}...")
-            # Добавляем описание целиком
             parts.append(category_description)
             logger.info(f"✅ Добавлено полное описание категории ({len(category_description)} символов)")
-        else:
-            logger.warning("⚠️ Описание категории не было передано или пустое")
 
         # 3. Назначение (поддерживаем оба варианта: purpose и purposes)
         purpose = params.get('purpose', '')
         purposes = params.get('purposes', [])
-
-        logger.info(f"🎯 Назначение (purpose): {purpose}")
-        logger.info(f"🎯 Назначения (purposes): {purposes}")
 
         # Маппинг назначений на русский
         purpose_map = {
@@ -626,9 +633,8 @@ class MPStatsScraperService:
 
         # Если есть purposes массив
         elif isinstance(purposes, list) and purposes:
-            for p in purposes:  # Берем максимум 3 назначения
+            for p in purposes:
                 if p and isinstance(p, str):
-                    # Пробуем найти русский перевод
                     purpose_clean = purpose_map.get(p.lower(), p)
                     purpose_clean = self._clean_purpose_text(purpose_clean)
                     if purpose_clean:
@@ -639,11 +645,9 @@ class MPStatsScraperService:
         additional_params = params.get('additional_params', [])
         if additional_params:
             logger.info(f"📝 Доп. параметры: {additional_params}")
-            # Если это строка, разделяем по запятым
             if isinstance(additional_params, str):
                 additional_params = [p.strip() for p in additional_params.split(',') if p.strip()]
 
-            # Если это список, берем первые 3 непустых элемента
             if isinstance(additional_params, list):
                 for param in additional_params:
                     if param and isinstance(param, str):
@@ -660,11 +664,6 @@ class MPStatsScraperService:
         # Объединяем все части
         query_text = " ".join(parts)
 
-        # Ограничиваем длину
-        # if len(query_text) > 100:
-        #     query_text = query_text[:97] + "..."
-        #     logger.info(f"⚠️ Текст запроса обрезан до 100 символов")
-
         logger.info(f"📝 ФИНАЛЬНЫЙ текст запроса: '{query_text}'")
         logger.info(f"📏 Длина: {len(query_text)} символов")
         logger.info(f"🔤 Частей: {len(parts)}")
@@ -674,26 +673,16 @@ class MPStatsScraperService:
     async def _check_download_directory(self, driver):
         """Проверка настроек директории скачивания"""
         try:
-            # Проверяем текущую директорию скачивания через JavaScript
-            download_path = driver.execute_script("""
-                return new Promise((resolve, reject) => {
-                    chrome.downloads.getFileBrowser(function(downloadItem) {
-                        resolve(downloadItem.filename);
-                    });
-                });
-            """)
-            logger.info(f"Текущая директория скачивания в браузере: {download_path}")
+            # Проверяем существование директории
+            if os.path.exists(self.download_dir):
+                logger.info(f"✅ Директория существует: {self.download_dir}")
+                logger.info(f"   Содержимое: {os.listdir(self.download_dir)}")
+            else:
+                logger.error(f"❌ Директория не существует: {self.download_dir}")
+                os.makedirs(self.download_dir, exist_ok=True)
+                logger.info(f"   Создана директория: {self.download_dir}")
         except Exception as e:
             logger.warning(f"Не удалось проверить директорию скачивания: {e}")
-
-        # Проверяем существование директории
-        if os.path.exists(self.download_dir):
-            logger.info(f"✅ Директория существует: {self.download_dir}")
-            logger.info(f"   Содержимое: {os.listdir(self.download_dir)}")
-        else:
-            logger.error(f"❌ Директория не существует: {self.download_dir}")
-            os.makedirs(self.download_dir, exist_ok=True)
-            logger.info(f"   Создана директория: {self.download_dir}")
 
     def _clean_purpose_text(self, purpose: str) -> str:
         """
@@ -736,12 +725,12 @@ class MPStatsScraperService:
         except Exception as e:
             logger.error(f"❌ Ошибка при очистке: {e}")
 
-        # Очистка временных файлов
+        # Очистка временных файлов (но НЕ трогаем chrome_profile)
         try:
             if hasattr(self, 'download_dir') and os.path.exists(self.download_dir):
                 for file in os.listdir(self.download_dir):
-                    file_path = os.path.join(self.download_dir, file)
-                    if os.path.isfile(file_path):
+                    if file.endswith('.tmp') or file.endswith('.crdownload'):
+                        file_path = os.path.join(self.download_dir, file)
                         try:
                             os.remove(file_path)
                         except:

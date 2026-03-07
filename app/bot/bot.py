@@ -6,11 +6,11 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
 from app.bot.handlers.content_generation_handler import ContentGenerationHandler
+from app.bot.handlers.manual_filter_handler import ManualFilterHandler  # ДОБАВИТЬ ИМПОРТ
 from app.config.config import config
 from app.bot.handlers.start_handler import StartHandler
 from app.bot.handlers.category_handler import CategoryHandler
 from app.bot.handlers.generation_handler import GenerationHandler
-from app.bot.handlers.admin_handler import AdminHandler
 from app.bot.handlers.session_handler import SessionHandler
 from app.services import MPStatsService
 
@@ -161,7 +161,7 @@ class ContentGeneratorBot:
                 token=self.config.telegram.bot_token,
                 default=DefaultBotProperties(parse_mode=ParseMode.HTML)
             )
-            self.dp = Dispatcher()
+            self.dp = Dispatcher()  # Передаем storage в Dispatcher
             self.logger.info("Aiogram initialized")
         except Exception as e:
             self.logger.error(f"Error initializing aiogram: {e}")
@@ -171,10 +171,10 @@ class ContentGeneratorBot:
         """Инициализация обработчиков"""
         self.handlers = [
             StartHandler(self.config, self.services, self.repositories),
+            ManualFilterHandler(self.config, self.services, self.repositories),
             CategoryHandler(self.config, self.services, self.repositories),
             GenerationHandler(self.config, self.services, self.repositories),
             SessionHandler(self.config, self.services, self.repositories),
-            AdminHandler(self.config, self.services, self.repositories),
             ContentGenerationHandler(self.config, self.services, self.repositories),
         ]
 

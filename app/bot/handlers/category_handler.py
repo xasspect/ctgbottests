@@ -4,6 +4,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.fsm.context import FSMContext
 from app.bot.handlers.base_handler import BaseMessageHandler
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -46,7 +47,10 @@ class CategoryHandler(BaseMessageHandler):
 
         # то что должно работать до "собрать данные" закоменченая часть что выше должна удаляться без проблем
         self.router.message.register(self.reset_session, Command(commands=["reset"]))
-        self.router.message.register(self.handle_additional_params, F.text & ~F.command)
+        self.router.message.register(
+            self.handle_additional_params,
+            F.text & ~F.text.startswith('/')
+        )
         self.router.callback_query.register(self.handle_category_select, F.data.startswith("category_"))
         self.router.callback_query.register(self.handle_purpose_select, F.data.startswith("purpose_"))
         self.router.callback_query.register(self.handle_purpose_done, F.data.startswith("purpose_done_"))
@@ -1060,10 +1064,16 @@ class CategoryHandler(BaseMessageHandler):
         await self._show_data_collection_button(callback.message, session)
         await callback.answer()
 
-
-    async def handle_additional_params(self, message: Message):
+    async def handle_additional_params(self, message: Message, state: FSMContext = None):
         """Обработка ввода дополнительных параметров"""
         user_id = message.from_user.id
+
+        # ДОБАВИТЬ: Проверяем, не находимся ли мы в состоянии фильтрации
+        if state:
+            current_state = await state.get_state()
+            if current_state == "FilterStates:waiting_for_keywords":
+                self.logger.info("Игнорируем сообщение - пользователь в режиме фильтрации")
+                return
 
         # ИГНОРИРУЕМ КОМАНДЫ
         if message.text and message.text.startswith('/'):
@@ -1168,22 +1178,19 @@ class CategoryHandler(BaseMessageHandler):
         if not isinstance(session.purposes, list):
             return str(session.purposes)
 
-        # Если пустой список
         if len(session.purposes) == 0:
             return "не указаны"
 
-        # Если в purposes хранятся ID
+        # Переводим ID в названия
         purpose_names = []
         if self.categories and session.category_id in self.categories:
             category_data = self.categories[session.category_id]
             if "purposes" in category_data:
-                purposes_dict = category_data["purposes"]
-                if isinstance(purposes_dict, dict):
-                    for purpose_id in session.purposes:
-                        purpose_name = purposes_dict.get(purpose_id, purpose_id)
-                        purpose_names.append(purpose_name)
+                purposes_dict = category_data["purposes"]  # Здесь ключи английские, значения русские
+                for purpose_id in session.purposes:
+                    purpose_name = purposes_dict.get(purpose_id, purpose_id)
+                    purpose_names.append(purpose_name)
 
-        # Если не удалось преобразовать ID или словаря нет
         if not purpose_names:
             purpose_names = [str(p) for p in session.purposes]
 
@@ -1264,9 +1271,14 @@ class CategoryHandler(BaseMessageHandler):
             "Это тестовое сообщение. Реальная логика скрапера будет добавлена позже."
         )
 
-    async def reset_session(self, message: Message):
+    async def reset_session(self, message: Message, state: FSMContext = None):
         """Сброс сессии"""
         user_id = message.from_user.id
+
+        # ДОБАВИТЬ: Очищаем FSM состояние при сбросе сессии
+        if state:
+            await state.clear()
+            self.logger.info("FSM state cleared")
 
         session_repo = self.repositories['session_repo']
         active_sessions = session_repo.get_active_session(user_id)

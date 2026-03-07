@@ -247,7 +247,7 @@ class DataCollectionService:
             purposes: List[str],
             additional_params: List[str],
             category_description: str = None,
-            max_keywords: int = 25
+            max_keywords: int = 13
     ) -> Dict[str, Any]:
         """Обработка Excel файла через KeywordsProcessor с GPT-фильтрацией"""
         try:
