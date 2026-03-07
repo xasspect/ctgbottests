@@ -14,6 +14,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from app.config.mpstats_ui_config import MPSTATS_UI_CONFIG
+from app.config.config import config, SeleniumConfig
 
 from app.utils.selenium_tools.download_monitor import MPStatsDownloader
 from app.utils.selenium_tools.button_controller import ButtonFinder
@@ -188,8 +189,8 @@ class MPStatsScraperService:
 
         # ИСПРАВЛЕНО: Используем self.driver_manager как класс, а не экземпляр
         self.driver_manager = ChromeDriverManager(
-            headless=False,
-            use_stealth=False
+            headless= SeleniumConfig.headless,
+            use_stealth= SeleniumConfig.stealth_mode,
         )
 
         stealth_options = {

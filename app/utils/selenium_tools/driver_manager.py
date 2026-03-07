@@ -1,3 +1,4 @@
+# app/utils/selenium_tools/driver_manager.py
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options as ChromeOptions
@@ -6,6 +7,9 @@ from selenium.common.exceptions import TimeoutException
 import os
 import logging
 from typing import Optional
+import json
+
+from app.services.chrome_driver_updater import ChromeDriverUpdater
 
 try:
     from selenium_stealth import stealth
@@ -47,7 +51,6 @@ class ChromeDriverManager:
             Список путей к скачанным файлам
         """
         if not download_dir:
-            # Можно сохранить download_dir при создании драйвера
             if hasattr(self, 'last_download_dir'):
                 download_dir = self.last_download_dir
             else:
@@ -82,7 +85,9 @@ class ChromeDriverManager:
             disable_javascript: bool = False,
             user_agent: Optional[str] = None,
             proxy: Optional[str] = None,
-            stealth_options: Optional[dict] = None
+            stealth_options: Optional[dict] = None,
+            profile_dir: Optional[str] = None,  # НОВЫЙ ПАРАМЕТР
+            keep_profile: bool = True  # НОВЫЙ ПАРАМЕТР
     ) -> webdriver.Chrome:
         """
         Создает и настраивает Chrome драйвер с stealth режимом.
@@ -97,11 +102,12 @@ class ChromeDriverManager:
             user_agent: Кастомный User-Agent
             proxy: Прокси сервер
             stealth_options: Дополнительные настройки stealth
+            profile_dir: Путь к директории профиля Chrome
+            keep_profile: Сохранять профиль между запусками
 
         Returns:
             Настроенный Chrome WebDriver
         """
-        # ИСПРАВЛЕНО: Используем абсолютный путь для скачивания
         import app
         app_dir = os.path.dirname(os.path.dirname(app.__file__))
 
@@ -116,25 +122,41 @@ class ChromeDriverManager:
 
         # СОХРАНЯЕМ путь в атрибуте класса
         self.download_dir = download_dir
-        self.last_download_dir = download_dir  # Для совместимости
+        self.last_download_dir = download_dir
 
         # Путь для профиля Chrome
-        user_data_dir = os.path.join(app_dir, 'chrome_profile')
+        if profile_dir:
+            # Используем переданный путь
+            user_data_dir = profile_dir
+        else:
+            # Стандартный путь
+            user_data_dir = os.path.join(app_dir, 'chrome_profile')
+
+        # ИСПРАВЛЕНО: Важно - директория профиля должна существовать
         os.makedirs(user_data_dir, exist_ok=True)
 
-        logger.info(f"📁 Использую профиль Chrome: {user_data_dir}")
-        logger.info(f"📂 Директория для скачивания: {download_dir} (абсолютный путь)")
+        # ДОБАВЛЕНО: Проверка на наличие существующего профиля
+        if keep_profile:
+            logger.info(f"📁 Использую профиль Chrome (будет сохранен): {user_data_dir}")
+            # Проверяем, есть ли уже сохраненные данные
+            if os.path.exists(os.path.join(user_data_dir, 'Default')):
+                logger.info("✅ Найден существующий профиль с данными")
+            else:
+                logger.info("🆕 Создаю новый профиль Chrome")
+        else:
+            logger.info(f"📁 Использую временный профиль Chrome (будет удален): {user_data_dir}")
 
         chrome_options = self._configure_chrome_options(
             user_data_dir=user_data_dir,
-            download_dir=download_dir,  # Передаем абсолютный путь
+            download_dir=download_dir,
             block_videos=block_videos,
             block_images=block_images,
             block_sounds=block_sounds,
             block_animations=block_animations,
             disable_javascript=disable_javascript,
             user_agent=user_agent,
-            proxy=proxy
+            proxy=proxy,
+            keep_profile=keep_profile  # НОВЫЙ ПАРАМЕТР
         )
 
         driver = self._create_driver_with_options(chrome_options)
@@ -155,17 +177,42 @@ class ChromeDriverManager:
             block_animations: bool,
             disable_javascript: bool,
             user_agent: Optional[str],
-            proxy: Optional[str]
+            proxy: Optional[str],
+            keep_profile: bool = True  # НОВЫЙ ПАРАМЕТР
     ) -> ChromeOptions:
         chrome_options = ChromeOptions()
 
         # Базовые флаги для работы в контейнере
-        # chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--remote-debugging-port=9222")
+
+        # ИСПРАВЛЕНО: Добавляем путь к профилю
+        chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
+
+        # ДОБАВЛЕНО: Используем конкретный профиль
+        chrome_options.add_argument("--profile-directory=Default")
+
+        # ДОБАВЛЕНО: Флаги для сохранения профиля
+        if keep_profile:
+            # Эти флаги помогают сохранять куки и сессии
+            chrome_options.add_argument("--disable-session-crashed-bubble")
+            chrome_options.add_argument(
+                "--disable-features=OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints")
+            chrome_options.add_argument("--disable-features=TranslateUI")
+            chrome_options.add_argument("--disable-features=ChromeWhatsNewUI")
+
+            # Сохраняем пароли и автозаполнение
+            prefs = {
+                "credentials_enable_service": True,
+                "profile.password_manager_enabled": True,
+                "profile.default_content_setting_values.notifications": 2,
+            }
+        else:
+            prefs = {}
 
         # User-Agent (если не задан, ставим стандартный)
         if not user_agent:
@@ -173,23 +220,29 @@ class ChromeDriverManager:
         chrome_options.add_argument(f"user-agent={user_agent}")
 
         # Настройки загрузок
-        prefs = {
+        download_prefs = {
             "download.default_directory": download_dir,
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
             "safebrowsing.enabled": False,
         }
+
+        # Объединяем с существующими prefs
+        prefs.update(download_prefs)
         chrome_options.add_experimental_option("prefs", prefs)
 
         # Минимальное скрытие автоматизации
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
 
+        # ДОБАВЛЕНО: Дополнительные флаги для стабильности
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
+
         return chrome_options
 
     def _create_driver_with_options(self, chrome_options: ChromeOptions) -> webdriver.Chrome:
         try:
-            from app.services.chrome_driver_updater import ChromeDriverUpdater
             updater = ChromeDriverUpdater()
             driver_path = updater.get_driver_path()
             logger.info(f"🚀 Путь к ChromeDriver: {driver_path}")
@@ -281,7 +334,6 @@ class ChromeDriverManager:
                 // Модифицируем window.chrome
                 window.chrome = {
                     runtime: {},
-                    // и другие свойства...
                 };
 
                 // Скрываем признаки автоматизации в permissions
@@ -374,9 +426,13 @@ class ChromeDriverManager:
     def quit(self):
         """Закрывает драйвер."""
         if self.driver:
-            self.driver.quit()
-            self.driver = None
-            logger.info("Chrome драйвер закрыт")
+            try:
+                self.driver.quit()
+                logger.info("Chrome драйвер закрыт")
+            except:
+                logger.warning("Не удалось закрыть драйвер")
+            finally:
+                self.driver = None
 
     def __enter__(self):
         return self
