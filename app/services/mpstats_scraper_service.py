@@ -16,8 +16,6 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from app.config.mpstats_ui_config import MPSTATS_UI_CONFIG
 from app.config.config import config, SeleniumConfig
 
-from app.utils.selenium_tools.download_monitor import MPStatsDownloader
-from app.utils.selenium_tools.button_controller import ButtonFinder
 from app.utils.selenium_tools.driver_manager import ChromeDriverManager
 
 logger = logging.getLogger(__name__)
