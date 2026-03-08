@@ -243,20 +243,19 @@ class Config:
         )
 
         # Генерация контента
-        self.generation = GenerationConfig(
-            max_keywords=int(os.getenv('MAX_KEYWORDS', '50')),
-            max_title_length=int(os.getenv('MAX_TITLE_LENGTH', '60')),
-            max_short_desc_length=int(os.getenv('MAX_SHORT_DESC_LENGTH', '800')),
-            max_long_desc_length=int(os.getenv('MAX_LONG_DESC_LENGTH', '3000')),
-            title_generation_attempts=int(os.getenv('TITLE_GENERATION_ATTEMPTS', '3')),
-            description_generation_attempts=int(os.getenv('DESCRIPTION_GENERATION_ATTEMPTS', '3')),
-            simple_generation_enabled=self._get_bool('SIMPLE_GENERATION_ENABLED', True),
-            advanced_generation_enabled=self._get_bool('ADVANCED_GENERATION_ENABLED', True)
-        )
+        # self.generation = GenerationConfig(
+        #     max_keywords=int(os.getenv('MAX_KEYWORDS', '50')),
+        #     max_title_length=int(os.getenv('MAX_TITLE_LENGTH', '60')),
+        #     max_short_desc_length=int(os.getenv('MAX_SHORT_DESC_LENGTH', '800')),
+        #     max_long_desc_length=int(os.getenv('MAX_LONG_DESC_LENGTH', '3000')),
+        #     title_generation_attempts=int(os.getenv('TITLE_GENERATION_ATTEMPTS', '3')),
+        #     description_generation_attempts=int(os.getenv('DESCRIPTION_GENERATION_ATTEMPTS', '3')),
+        #     simple_generation_enabled=self._get_bool('SIMPLE_GENERATION_ENABLED', True),
+        #     advanced_generation_enabled=self._get_bool('ADVANCED_GENERATION_ENABLED', True)
+        # )
 
         # Лимиты
         self.limits = LimitsConfig(
-            user_daily_limit=int(os.getenv('USER_DAILY_LIMIT', '50')),
             session_timeout=int(os.getenv('SESSION_TIMEOUT', '3600')),
             request_timeout=int(os.getenv('REQUEST_TIMEOUT', '30')),
             max_concurrent_requests=int(os.getenv('MAX_CONCURRENT_REQUESTS', '5'))
@@ -304,26 +303,6 @@ class Config:
             default_options.extend([opt.strip() for opt in custom_options.split(',') if opt.strip()])
 
         return default_options
-
-    def _parse_admin_ids(self) -> List[int]:
-        """
-        Парсит список администраторов из переменной TELEGRAM_ADMIN_ID.
-        Ожидается строка с ID, разделёнными запятыми (например: "123456,789012").
-        Возвращает список целых чисел. Если переменная не задана или пуста — пустой список.
-        """
-        admin_ids_str = os.getenv('TELEGRAM_ADMIN_ID', '').strip()
-        if not admin_ids_str:
-            print("TELEGRAM_ADMIN_ID не задан, список администраторов пуст.")
-            return []
-
-        ids = []
-        parts = [p.strip() for p in admin_ids_str.split(',') if p.strip()]
-        for part in parts:
-            try:
-                ids.append(int(part))
-            except ValueError:
-                print(f"Некорректный ID в TELEGRAM_ADMIN_ID: '{part}' — пропущен.")
-        return ids
 
     def _get_required(self, key: str) -> str:
         """Получить обязательную переменную окружения"""
@@ -488,7 +467,6 @@ class Config:
             f"  user={self.database.user}\n"
             f")\n"
             f"TelegramConfig(\n"
-            f"  admin_id={self.telegram.admin_id},\n"
             f"  parse_mode={self.telegram.parse_mode}\n"
             f")\n"
             f"APIConfig(\n"
@@ -501,12 +479,3 @@ class Config:
 
 # Глобальный экземпляр конфигурации
 config = Config()
-
-# Автоматическая валидация при импорте
-if __name__ == "__main__":
-    print("Running configuration self-test...")
-    if config.validate():
-        print("✅ Configuration is valid!")
-    else:
-        print("❌ Configuration validation failed!")
-        exit(1)

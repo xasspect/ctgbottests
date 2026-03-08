@@ -132,15 +132,11 @@ class KeywordsProcessor:
         ТОЛЬКО из первого столбца, с фильтрацией
         """
         self.logger.info(f"📂 Конвертация файла: {excel_path}")
-        self.logger.info(f"🎯 Стратегия: БЕРУ ТОЛЬКО ПЕРВЫЙ СТОЛБЕЦ, фильтрую цифры и мусор")
 
         try:
             # Проверяем файл
             if not os.path.exists(excel_path):
                 raise FileNotFoundError(f"Файл не найден: {excel_path}")
-
-            file_size = os.path.getsize(excel_path)
-            self.logger.info(f"📏 Размер файла: {file_size} байт")
 
             # Загружаем Excel файл
             excel_data = pd.read_excel(excel_path, sheet_name=None)
@@ -205,7 +201,7 @@ class KeywordsProcessor:
                 json.dump(json_data, json_file, ensure_ascii=False, indent=2)
 
             file_size = os.path.getsize(json_path)
-            self.logger.info(f"✅ JSON файл сохранен. Размер: {file_size} байт")
+            self.logger.info(f"✅ JSON файл сохранен.")
             self.logger.info(f"✅ Конвертация завершена успешно. Уникальных ключевых слов: {len(unique_keywords)}")
 
             return json_path
@@ -349,37 +345,3 @@ class KeywordsProcessor:
         except Exception as e:
             self.logger.error(f"Ошибка загрузки ключевых слов: {str(e)}")
             return []
-
-
-# Пример использования
-if __name__ == "__main__":
-    # Настройка логирования
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-    # Создание процессора
-    processor = KeywordsProcessor(preserve_excel=False, target_column="Кластер WB")
-
-    # Пример конвертации одного файла
-    try:
-        # Укажите путь к тестовому XLSX файлу
-        test_xlsx = "downloads/mpstats/test.xlsx"
-        if os.path.exists(test_xlsx):
-            enriched_json = processor.create_enriched_json(
-                excel_path=test_xlsx,
-                category="electronics",
-                purpose="продажа",
-                additional_params=["новинка", "скидка"]
-            )
-            print(f"Обогащенный JSON создан: {enriched_json}")
-
-            # Загрузка ключевых слов для проверки
-            keywords = processor.load_keywords_from_json(enriched_json)
-            print(f"Загружено ключевых слов: {len(keywords)}")
-            print(f"Примеры: {keywords[:5]}")
-        else:
-            print(f"Тестовый файл не найден: {test_xlsx}")
-    except Exception as e:
-        print(f"Ошибка: {e}")

@@ -3,7 +3,6 @@ Utilities Package
 """
 
 from app.utils.logger import setup_logging, get_logger
-from app.utils.data_gen_service import DataGenService
 from app.utils.keywords_processor import KeywordsProcessor
 
 
