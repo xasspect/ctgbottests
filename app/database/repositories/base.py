@@ -14,6 +14,7 @@ class BaseRepository(Generic[T]):
     """Базовый репозиторий для CRUD операций"""
 
     def __init__(self, model_class: T):
+        self.logger = logger
         self.model_class = model_class
 
     def get_session(self) -> Session:
@@ -37,19 +38,36 @@ class BaseRepository(Generic[T]):
         finally:
             session.close()
 
+    # app/database/repositories/base.py
+
     def create(self, **kwargs) -> T:
         """Создать запись"""
         session = self.get_session()
         try:
-            instance = self.model_class(**kwargs)
+            # Подготавливаем данные
+            prepared_kwargs = {}
+            for key, value in kwargs.items():
+                if isinstance(value, list):
+                    prepared_kwargs[key] = value  # Оставляем как список
+                else:
+                    prepared_kwargs[key] = value
+
+            instance = self.model_class(**prepared_kwargs)
             session.add(instance)
             session.commit()
             session.refresh(instance)
-            logger.info(f"✅ Создан {self.model_class.__name__}: {instance.id}")
+
+            # Логируем результат
+            self.logger.info(f"✅ Создан {self.model_class.__name__}: {instance.id}")
+            for key in ['purposes', 'keywords']:
+                if hasattr(instance, key):
+                    val = getattr(instance, key)
+                    self.logger.info(f"   {key}: {val} (тип: {type(val)})")
+
             return instance
         except Exception as e:
             session.rollback()
-            logger.error(f"❌ Ошибка создания {self.model_class.__name__}: {e}")
+            self.logger.error(f"❌ Ошибка создания {self.model_class.__name__}: {e}")
             raise
         finally:
             session.close()

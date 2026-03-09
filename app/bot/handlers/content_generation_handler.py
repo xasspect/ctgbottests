@@ -48,7 +48,7 @@ class ContentGenerationHandler(BaseMessageHandler):
         )
 
         self.router.callback_query.register(
-            self.handle_back_to_data,  # НОВЫЙ обработчик
+            self.handle_back_to_data,
             F.data == "back_to_results"
         )
 
@@ -86,7 +86,7 @@ class ContentGenerationHandler(BaseMessageHandler):
             callback_data=f"generate_ozon_desc_{session_id}"
         )
 
-        # Кнопка возврата к данным (оставляем, но она будет в новом сообщении)
+        # Кнопка возврата к данным
         builder.button(
             text="↩️ Назад к данным",
             callback_data=f"back_to_data_{session_id}"
@@ -94,7 +94,6 @@ class ContentGenerationHandler(BaseMessageHandler):
 
         builder.adjust(1)
 
-        # ИЗМЕНЕНО: отправляем новое сообщение вместо редактирования старого
         await message.answer(
             "🎯 <b>Меню генерации контента:</b>\n\n"
             "<b>Wildberries:</b>\n"
@@ -153,77 +152,24 @@ class ContentGenerationHandler(BaseMessageHandler):
                 reply_markup=builder.as_markup()
             )
 
-            # Удаляем сообщение с меню генерации (опционально)
+            # Удаляем сообщение с меню генерации
             await callback.message.delete()
-
             await callback.answer()
 
         except Exception as e:
             self.logger.error(f"Ошибка при возврате к данным: {e}")
             await callback.answer("❌ Ошибка", show_alert=True)
 
-    # async def handle_copy_content(self, callback: CallbackQuery):
-    #     """Обработка кнопки копирования контента"""
-    #     try:
-    #         # Извлекаем ID контента из callback_data
-    #         content_id = callback.data.replace("copy_", "")
-    #
-    #         # Получаем сохранённый контент
-    #         content_data = self.generated_content.get(content_id)
-    #
-    #         if not content_data:
-    #             await callback.answer("❌ Контент не найден или устарел", show_alert=True)
-    #             return
-    #
-    #         # Отправляем контент отдельным сообщением для удобного копирования
-    #         await callback.message.answer(
-    #             f"<b>📋 {content_data['type']} (для копирования):</b>\n\n"
-    #             f"<code>{content_data['content']}</code>"
-    #         )
-    #
-    #         await callback.answer("✅ Контент скопирован в сообщение выше", show_alert=False)
-    #
-    #     except Exception as e:
-    #         self.logger.error(f"Ошибка при копировании: {e}")
-    #         await callback.answer("❌ Ошибка при копировании", show_alert=True)
-
-    # def _save_content_for_copy(self, content: str, content_type: str) -> str:
-    #     """
-    #     Сохраняет контент для возможности копирования
-    #     Возвращает ID контента
-    #     """
-    #     # Создаём уникальный ID на основе контента и времени
-    #     content_id = hashlib.md5(f"{content}{content_type}{time.time()}".encode()).hexdigest()[:8]
-    #
-    #     self.generated_content[content_id] = {
-    #         'content': content,
-    #         'type': content_type,
-    #         'timestamp': time.time()
-    #     }
-    #
-    #     # Очищаем старые записи (старше 1 часа)
-    #     current_time = time.time()
-    #     self.generated_content = {
-    #         k: v for k, v in self.generated_content.items()
-    #         if current_time - v['timestamp'] < 3600
-    #     }
-    #
-    #     return content_id
-
     def _has_size_in_params(self, additional_params: List[str], keywords: List[str]) -> bool:
-        """
-        Проверяет, есть ли указания на размеры в параметрах или ключевых словах
-        """
+        """Проверяет, есть ли указания на размеры в параметрах или ключевых словах"""
         size_indicators = ['мм', 'см', 'м', 'размер', 'длина', 'ширина', 'высота',
                            'толщина', 'формат', '×', 'x', '*', 'габарит']
 
-        # Проверяем дополнительные параметры
         for param in additional_params:
             param_lower = param.lower()
             if any(indicator in param_lower for indicator in size_indicators):
                 return True
 
-        # Проверяем ключевые слова
         for kw in keywords:
             kw_lower = kw.lower()
             if any(indicator in kw_lower for indicator in size_indicators):
@@ -232,21 +178,16 @@ class ContentGenerationHandler(BaseMessageHandler):
         return False
 
     def _has_size_mention(self, text: str) -> bool:
-        """
-        Проверяет, есть ли в тексте упоминание размеров
-        """
+        """Проверяет, есть ли в тексте упоминание размеров"""
         size_patterns = ['мм', 'см', 'м', '×', 'x', '*', 'размер', 'формат']
         text_lower = text.lower()
         return any(pattern in text_lower for pattern in size_patterns)
 
     def _translate_purposes_to_russian(self, purposes: List[str]) -> List[str]:
-        """
-        Переводит английские ID назначений в русские названия
-        """
+        """Переводит английские ID назначений в русские названия"""
         if not purposes:
             return []
 
-        # Маппинг назначений на русский (такой же как в скрапере)
         purpose_map = {
             "wood": "под дерево",
             "with_pattern": "с рисунком",
@@ -271,7 +212,6 @@ class ContentGenerationHandler(BaseMessageHandler):
                 if purpose_lower in purpose_map:
                     translated.append(purpose_map[purpose_lower])
                 else:
-                    # Проверяем частичное совпадение
                     found = False
                     for eng_key, rus_value in purpose_map.items():
                         if eng_key in purpose_lower:
@@ -279,7 +219,7 @@ class ContentGenerationHandler(BaseMessageHandler):
                             found = True
                             break
                     if not found:
-                        translated.append(purpose)  # оставляем как есть
+                        translated.append(purpose)
             else:
                 translated.append(str(purpose))
 
@@ -294,31 +234,26 @@ class ContentGenerationHandler(BaseMessageHandler):
             if not session:
                 return None, "❌ Сессия не найдена"
 
-            # Получаем категорию
             category_repo = self.repositories['category_repo']
             category = category_repo.get_by_id(session.category_id)
 
             if not category:
                 return None, "❌ Категория не найдена"
 
-            # Получаем ключевые слова из сессии
             keywords = session.keywords or []
 
-            # Получаем назначения
             purposes = []
             if hasattr(session, 'purposes') and session.purposes:
-                # ДОБАВЛЯЕМ ПЕРЕВОД НАЗНАЧЕНИЙ!
                 purposes = self._translate_purposes_to_russian(session.purposes)
             elif hasattr(session, 'purpose') and session.purpose:
                 purposes = [session.purpose]
 
-            # Получаем дополнительные параметры
             additional_params = session.additional_params or []
 
             return {
                 'session': session,
                 'category': category.name,
-                'purposes': purposes,  # Здесь уже переведенные на русский
+                'purposes': purposes,
                 'additional_params': additional_params,
                 'keywords': keywords
             }, None
@@ -329,10 +264,7 @@ class ContentGenerationHandler(BaseMessageHandler):
 
     async def _generate_wb_title_with_retry(self, callback: CallbackQuery, session_id: str,
                                             max_retries: int = 3) -> str:
-        """
-        Специализированный метод для генерации Wildberries title с контролем длины
-        и соответствием порядку ключевых слов
-        """
+        """Специализированный метод для генерации Wildberries title"""
         data, error = await self._get_session_data(session_id)
         if error:
             await callback.message.answer(error)
@@ -349,7 +281,6 @@ class ContentGenerationHandler(BaseMessageHandler):
             await callback.message.answer("❌ Сервисы не доступны")
             return None
 
-        # Формируем подсказку о порядке ключевых слов
         keywords_with_priority = "\n".join([f"{i + 1}. {kw}" for i, kw in enumerate(keywords[:15])])
 
         expected_order = """
@@ -361,7 +292,6 @@ class ContentGenerationHandler(BaseMessageHandler):
         5. Размер или количество
         """
 
-        # Первый запрос
         system_prompt, user_prompt = prompt_service.get_wb_title_prompt(
             category=category, purposes=purposes,
             additional_params=additional_params, keywords=keywords
@@ -384,16 +314,11 @@ class ContentGenerationHandler(BaseMessageHandler):
             temperature=self.config.api.openai_temperature
         )
 
-        # ИСПРАВЛЕНИЕ: Не проверяем длину здесь, просто возвращаем сырой ответ
-        # Проверка длины будет после парсинга в _generate_content
-
         return content
 
     async def _generate_ozon_title_with_retry(self, callback: CallbackQuery, session_id: str,
                                               max_retries: int = 3) -> str:
-        """
-        Специализированный метод для генерации Ozon title с контролем длины
-        """
+        """Специализированный метод для генерации Ozon title"""
         data, error = await self._get_session_data(session_id)
         if error:
             await callback.message.answer(error)
@@ -404,7 +329,6 @@ class ContentGenerationHandler(BaseMessageHandler):
         keywords = data['keywords']
         additional_params = data['additional_params']
 
-        # Проверяем, есть ли размеры во входных данных
         has_sizes = self._has_size_in_params(additional_params, keywords)
 
         prompt_service = self.services.get('prompt')
@@ -413,12 +337,10 @@ class ContentGenerationHandler(BaseMessageHandler):
             await callback.message.answer("❌ Сервисы не доступны")
             return None
 
-        # Получаем описание категории
         category_repo = self.repositories['category_repo']
         category_obj = category_repo.get_by_id(data['session'].category_id)
         category_description = category_obj.description if category_obj else ""
 
-        # Первый запрос
         system_prompt, user_prompt = prompt_service.get_ozon_title_prompt(
             category=category, purposes=purposes,
             additional_params=additional_params, keywords=keywords,
@@ -438,17 +360,13 @@ class ContentGenerationHandler(BaseMessageHandler):
         while retry_count < max_retries:
             length = len(current_content)
 
-            # Проверяем длину
             if 120 <= length <= 160:
                 self.logger.info(f"✅ Ozon title в норме: {length} символов")
                 break
 
             retry_count += 1
-
-            # Проверяем наличие размеров в текущем названии
             has_sizes_in_title = self._has_size_mention(current_content)
 
-            # Формируем базовый промпт в зависимости от проблемы
             if length < 120:
                 base_prompt = f"""
                 Название содержит {length} символов. Нужно минимум 120, но не больше 160. Расширь.
@@ -474,7 +392,6 @@ class ContentGenerationHandler(BaseMessageHandler):
                 """
                 action = "укороти"
 
-            # Добавляем правило про размеры
             if not has_sizes:
                 size_rule = """
                 ВАЖНО: В исходных данных НЕТ указаний на размеры товара.
@@ -487,7 +404,6 @@ class ContentGenerationHandler(BaseMessageHandler):
                 Можешь использовать размеры для расширения названия, если нужно.
                 """
 
-            # Проверяем, есть ли сейчас размеры в названии (для случая, когда их быть не должно)
             if not has_sizes and has_sizes_in_title:
                 size_warning = """
                 В текущем названии ЕСТЬ указания на размеры, хотя в исходных данных их нет.
@@ -496,7 +412,6 @@ class ContentGenerationHandler(BaseMessageHandler):
             else:
                 size_warning = ""
 
-            # Собираем полный промпт
             expand_prompt = base_prompt + size_rule + size_warning + f"""
 
             Требования:
@@ -531,7 +446,6 @@ class ContentGenerationHandler(BaseMessageHandler):
             status_msg = await callback.message.answer(f"🤖 <b>Генерирую контент...</b>")
 
             try:
-                # Получаем сервисы
                 prompt_service = self.services.get('prompt')
                 openai_service = self.services.get('openai')
 
@@ -539,7 +453,6 @@ class ContentGenerationHandler(BaseMessageHandler):
                     await self._safe_edit_text(status_msg, "❌ Сервисы не доступны")
                     return
 
-                # Генерируем контент
                 if generation_type == "title":
                     if marketplace == "ozon":
                         content = await self._generate_ozon_title_with_retry(callback, session_id, max_retries=3)
@@ -596,7 +509,6 @@ class ContentGenerationHandler(BaseMessageHandler):
                     length = len(content)
                     self.logger.info(f"📏 Длина после парсинга: {length} символов")
 
-                    # Если длина выходит за пределы, делаем повторную генерацию
                     needs_correction = False
                     if marketplace == "wb" and (length < 60 or length > 80):
                         needs_correction = True
@@ -609,10 +521,8 @@ class ContentGenerationHandler(BaseMessageHandler):
                         self.logger.warning(
                             f"⚠️ {marketplace.upper()} title после парсинга {length} символов, требуется корректировка")
 
-                        # Получаем данные сессии для повторной генерации
                         data, error = await self._get_session_data(session_id)
                         if not error:
-                            # Формируем промпт для корректировки
                             correction_prompt = f"""
                             Откорректируй заголовок до длины {target_min}-{target_max} символов.
 
@@ -642,28 +552,83 @@ class ContentGenerationHandler(BaseMessageHandler):
                                 content = corrected
                                 self.logger.info(f"✅ Заголовок скорректирован: {len(content)} символов")
 
-                # ИСПРАВЛЕНИЕ: Безопасно удаляем статусное сообщение
+                # ========== СОХРАНЕНИЕ В БД (ИСПРАВЛЕНО) ==========
+                try:
+                    session_repo = self.repositories['session_repo']
+                    content_repo = self.repositories.get('content_repo')
+
+                    if content_repo:
+                        # Получаем полные данные сессии для контекста (синхронно)
+                        session_context_result = await self._get_session_data(session_id)
+                        if session_context_result and session_context_result[0]:
+                            session_data = session_context_result[0]
+
+                            # Сохраняем результат в зависимости от типа
+                            content_type_map = {
+                                ('title', 'wb'): 'wb_title',
+                                ('short_desc', 'wb'): 'wb_short_desc',
+                                ('long_desc', 'wb'): 'wb_long_desc',
+                                ('title', 'ozon'): 'ozon_title',
+                                ('desc', 'ozon'): 'ozon_desc',
+                            }
+                            key = (generation_type, marketplace)
+
+                            # Сохраняем в сессию последний сгенерированный контент (синхронно)
+                            if key in content_type_map:
+                                field_name = f"last_generated_{content_type_map[key]}"
+                                # УБИРАЕМ await - это синхронный метод
+                                session_repo.update_session_data(
+                                    session_id,
+                                    **{field_name: content}
+                                )
+                                self.logger.info(f"✅ Сохранен {field_name} для сессии {session_id}")
+
+                            # Для полных описаний сохраняем в историю
+                            if (generation_type == 'long_desc' and marketplace == 'wb') or \
+                                    (generation_type == 'desc' and marketplace == 'ozon'):
+
+                                # Получаем все сохраненные данные из сессии (синхронно)
+                                session_obj = session_repo.get_by_id(session_id)
+
+                                if session_obj:
+                                    # Сохраняем в таблицу generated_content (синхронно)
+                                    content_repo.save_generation_result(
+                                        session_id=session_id,
+                                        user_id=callback.from_user.id,
+                                        title=getattr(session_obj, 'last_generated_wb_title', '') or '',
+                                        short_desc=getattr(session_obj, 'last_generated_wb_short_desc', '') or '',
+                                        long_desc=content if marketplace == 'wb' else getattr(session_obj,
+                                                                                              'last_generated_wb_long_desc',
+                                                                                              '') or '',
+                                        ozon_title=getattr(session_obj, 'last_generated_ozon_title', '') or '',
+                                        ozon_desc=content if marketplace == 'ozon' else getattr(session_obj,
+                                                                                                'last_generated_ozon_desc',
+                                                                                                '') or '',
+                                        keywords=session_data.get('keywords', []),
+                                        category_id=session_data['session'].category_id,
+                                        purposes=session_data.get('purposes', [])
+                                    )
+                                    self.logger.info(
+                                        f"✅ Полный результат генерации сохранен в историю для сессии {session_id}")
+
+                except Exception as e:
+                    self.logger.error(f"❌ Ошибка сохранения в БД: {e}")
+
                 await self._safe_delete_message(status_msg)
 
                 result_type = self._get_result_type(generation_type, marketplace)
 
-                # Сохраняем контент для копирования
-                # content_id = self._save_content_for_copy(content, result_type)
-
                 # Клавиатура после генерации
                 builder = InlineKeyboardBuilder()
                 builder.button(text="🔄 Сгенерировать заново", callback_data=callback.data)
-                # builder.button(text="📋 Скопировать", callback_data=f"copy_{content_id}")
                 builder.button(text="🎯 Меню генерации", callback_data="back_to_generation_menu")
                 builder.button(text="↩️ К данным", callback_data=f"back_to_data_{session_id}")
                 builder.adjust(1)
 
-                # Форматируем вывод
                 display_text = self._format_output(content, result_type, generation_type, marketplace)
                 await callback.message.answer(display_text, reply_markup=builder.as_markup())
 
             except Exception as e:
-                # ИСПРАВЛЕНИЕ: Безопасно обрабатываем ошибку с статусным сообщением
                 error_text = f"❌ Ошибка генерации: {str(e)[:200]}"
                 await self._safe_edit_text(status_msg, error_text)
                 self.logger.error(f"Ошибка генерации: {e}")
@@ -691,7 +656,6 @@ class ContentGenerationHandler(BaseMessageHandler):
         except Exception as e:
             self.logger.debug(f"Не удалось отредактировать сообщение: {e}")
             try:
-                # Если не удалось отредактировать, отправляем новое
                 await message.answer(text, **kwargs)
             except:
                 pass
@@ -751,13 +715,10 @@ class ContentGenerationHandler(BaseMessageHandler):
                        generation_type: str, marketplace: str) -> str:
         """Форматирует вывод с учётом типа контента"""
 
-        # Для ВСЕХ типов контента используем code тег для удобного копирования
         display_text = f"<b>📄 {result_type}:</b>\n\n<code>{content}</code>\n\n"
         display_text += f"📏 <b>Длина:</b> {len(content)} символов"
 
-        # Для заголовков добавляем дополнительную информацию
         if generation_type == "title":
-            # Показываем статус длины в зависимости от маркетплейса
             if marketplace == "ozon":
                 length = len(content)
                 if length < 120:
@@ -779,7 +740,6 @@ class ContentGenerationHandler(BaseMessageHandler):
 
         return display_text
 
-    # Обработчики для каждой кнопки
     async def handle_generate_wb_title(self, callback: CallbackQuery):
         session_id = callback.data.replace("generate_wb_title_", "")
         await self._generate_content(callback, session_id, "title", "wb")
@@ -803,56 +763,15 @@ class ContentGenerationHandler(BaseMessageHandler):
     async def handle_back_to_generation_menu(self, callback: CallbackQuery):
         """Возврат к меню генерации"""
         try:
-            # Получаем session_id из активной сессии пользователя
             user_id = callback.from_user.id
             session_repo = self.repositories['session_repo']
             session = session_repo.get_active_session(user_id)
 
             if session:
                 await self.show_generation_menu(callback.message, session.id)
-                # Удаляем старое сообщение с результатом генерации
                 await callback.message.delete()
             else:
                 await callback.answer("❌ Сессия не найдена")
         except Exception as e:
             self.logger.error(f"Ошибка возврата в меню генерации: {e}")
             await callback.answer("❌ Ошибка возврата")
-
-    # async def handle_back_to_set(self, callback: CallbackQuery):
-    #     """Возврат к набору данных"""
-    #     # Здесь будет переход к отображению собранных данных
-    #     from app.bot.handlers.generation_handler import GenerationHandler
-    #     gen_handler = GenerationHandler(self.config, self.services, self.repositories)
-    #
-    #     user_id = callback.from_user.id
-    #     session_repo = self.repositories['session_repo']
-    #     session = session_repo.get_active_session(user_id)
-    #
-    #     if session:
-    #         # Показываем данные сессии
-    #         builder = InlineKeyboardBuilder()
-    #         builder.button(
-    #             text="🎯 Меню генерации",
-    #             callback_data=f"show_generation_menu_{session.id}"
-    #         )
-    #         builder.button(
-    #             text="✏️ Ручная фильтрация ключей",
-    #             callback_data=f"manual_filter_{session.id}"
-    #         )
-    #         builder.adjust(1)
-    #
-    #         preview = "\n".join([f"• {kw}" for kw in session.keywords[:10]])
-    #         if len(session.keywords) > 10:
-    #             preview += f"\n• ... и ещё {len(session.keywords) - 10}"
-    #
-    #         await callback.message.edit_text(
-    #             f"📊 <b>Собранные данные:</b>\n\n"
-    #             f"• Категория: {session.category_id}\n"
-    #             f"• Ключевых слов: {len(session.keywords)}\n\n"
-    #             f"<b>Ключевые слова:</b>\n{preview}",
-    #             reply_markup=builder.as_markup()
-    #         )
-    #     else:
-    #         await callback.message.answer("❌ Сессия не найдена")
-    #
-    #     await callback.answer()

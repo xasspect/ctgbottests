@@ -568,22 +568,22 @@ class MPStatsScraperService:
         logger.info(f"📝 Параметры для формирования запроса: {params}")
 
         # 1. Категория
-        category = params.get('category', '').strip()
-        if category:
-            # Маппинг категорий на русский
-            category_map = {
-                "decorative_panels": "декоративные панели",
-                "soft_panels": "мягкие панели",
-                "self_adhesive_wallpaper": "самоклеящиеся обои",
-                "pet_panels": "ПЭТ панели",
-                "baby_panels": "3D панели",
-                "aprons": "фартуки",
-                "3d_panels": "3D панели",
-                "battens": "реечные панели"
-            }
-            category_name = category_map.get(category, category)
-            parts.append(category_name)
-            logger.info(f"✅ Категория: {category_name}")
+        # category = params.get('category', '').strip()
+        # if category:
+        #     # Маппинг категорий на русский
+        #     category_map = {
+        #         "decorative_panels": "декоративные панели",
+        #         "soft_panels": "мягкие панели",
+        #         "self_adhesive_wallpaper": "самоклеящиеся обои",
+        #         "pet_panels": "ПЭТ панели",
+        #         "baby_panels": "3D панели",
+        #         "aprons": "фартуки",
+        #         "3d_panels": "3D панели",
+        #         "battens": "реечные панели"
+        #     }
+        #     category_name = category_map.get(category, category)
+        #     parts.append(category_name)
+        #     logger.info(f"✅ Категория: {category_name}")
 
         # 2. Описание категории (из БД)
         category_description = params.get('category_description', '').strip()

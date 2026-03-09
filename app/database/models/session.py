@@ -8,18 +8,23 @@ class UserSession(Base, BaseModel):
     __tablename__ = "user_sessions"
 
     # Для сессий используем UUID
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))  # UUID как строка
-    user_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'))  # Ссылаемся на BigInteger
-    category_id = Column(String, ForeignKey('categories.id'))  # Ссылаемся на String!
-    purposes = Column(JSON, default=[])
-    additional_params = Column(JSON, default=[])
-    is_changing_params = Column(Boolean, default=False, nullable=False)
-    generated_title = Column(String, nullable=True)
-    keywords = Column(JSON, default=[])
-    short_description = Column(String, nullable=True)
-    long_description = Column(String, nullable=True)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'))
+    category_id = Column(String, ForeignKey('categories.id'))
+
+    # Эти поля уже должны быть. Если нет — добавьте.
+    purposes = Column(JSON, default=[])  # Список назначений (например, ["кухня", "3D"])
+    additional_params = Column(JSON, default=[])  # Доп. параметры
+    keywords = Column(JSON, default=[])  # Отфильтрованные ключевые слова
+
+    # Поля для хранения последнего сгенерированного контента (опционально, для быстрого доступа)
+    last_generated_wb_title = Column(String, nullable=True)
+    last_generated_short_desc = Column(Text, nullable=True)
+    last_generated_long_desc = Column(Text, nullable=True)
+    last_generated_ozon_title = Column(String, nullable=True)
+    last_generated_ozon_desc = Column(Text, nullable=True)
+
     current_step = Column(String, default='category_selected')
-    generation_mode = Column(String(50), default='advanced')
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
