@@ -242,17 +242,6 @@ class Config:
             chrome_options=self._get_chrome_options()
         )
 
-        # Генерация контента
-        # self.generation = GenerationConfig(
-        #     max_keywords=int(os.getenv('MAX_KEYWORDS', '50')),
-        #     max_title_length=int(os.getenv('MAX_TITLE_LENGTH', '60')),
-        #     max_short_desc_length=int(os.getenv('MAX_SHORT_DESC_LENGTH', '800')),
-        #     max_long_desc_length=int(os.getenv('MAX_LONG_DESC_LENGTH', '3000')),
-        #     title_generation_attempts=int(os.getenv('TITLE_GENERATION_ATTEMPTS', '3')),
-        #     description_generation_attempts=int(os.getenv('DESCRIPTION_GENERATION_ATTEMPTS', '3')),
-        #     simple_generation_enabled=self._get_bool('SIMPLE_GENERATION_ENABLED', True),
-        #     advanced_generation_enabled=self._get_bool('ADVANCED_GENERATION_ENABLED', True)
-        # )
 
         # Лимиты
         self.limits = LimitsConfig(
@@ -263,6 +252,34 @@ class Config:
 
         # Выводим информацию о конфигурации
         self._print_config_info()
+
+    def _parse_admin_ids(self) -> List[int]:
+        """
+        Парсит список администраторов из переменной окружения TELEGRAM_ADMIN_ID.
+        Ожидается строка с ID, разделёнными запятыми (например: "1777324274,123456789").
+        Возвращает список целых чисел. Если переменная не задана или пуста — пустой список.
+        """
+        admin_ids_str = os.getenv('TELEGRAM_ADMIN_ID', '').strip()
+
+        if not admin_ids_str:
+            print("⚠️ TELEGRAM_ADMIN_ID не задан, список администраторов пуст.")
+            return []
+
+        admin_ids = []
+        # Разделяем по запятой и удаляем пробелы
+        parts = [part.strip() for part in admin_ids_str.split(',') if part.strip()]
+
+        for part in parts:
+            try:
+                admin_ids.append(int(part))
+                print(f"✅ Добавлен администратор с ID: {part}")
+            except ValueError:
+                print(f"⚠️ Некорректный ID в TELEGRAM_ADMIN_ID: '{part}' — пропущен.")
+
+        if not admin_ids:
+            print("⚠️ Не удалось распарсить ни одного корректного ID администратора.")
+
+        return admin_ids
 
     def _get_database_url(self) -> str:
         """Получить URL базы данных с учетом Docker"""
