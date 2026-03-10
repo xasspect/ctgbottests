@@ -5,6 +5,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.bot.handlers.base_handler import BaseMessageHandler
+from app.bot.handlers.snapshot_handler import SnapshotHandler
 
 
 class StartHandler(BaseMessageHandler):
@@ -24,6 +25,7 @@ class StartHandler(BaseMessageHandler):
         self.router.callback_query.register(self.handle_help_button, F.data == "help_button")
         self.router.callback_query.register(self.handle_about_button, F.data == "about_button")
         self.router.callback_query.register(self.handle_back_to_menu, F.data == "back_to_main_menu")
+        self.router.callback_query.register(self.handle_show_snapshots, F.data == "show_snapshots")
 
     async def start(self, message: Message):
         """Обработка команды /start с проверкой доступа"""
@@ -53,6 +55,15 @@ class StartHandler(BaseMessageHandler):
         category_handler = CategoryHandler(self.config, self.services, self.repositories)
         await category_handler.show_categories_command(message)
 
+    async def handle_show_snapshots(self, callback: CallbackQuery):
+        """Обработка нажатия кнопки 'История генераций'"""
+        await callback.answer()
+
+        # Передаем управление в SnapshotHandler
+        from app.bot.handlers.snapshot_handler import SnapshotHandler
+        snapshot_handler = SnapshotHandler(self.config, self.services, self.repositories)
+        await snapshot_handler.show_snapshots(callback.message)
+
     async def handle_session(self, message: Message):
         """Обработка команды /session"""
         # Перенаправляем в SessionHandler
@@ -69,6 +80,7 @@ class StartHandler(BaseMessageHandler):
         builder = InlineKeyboardBuilder()
         builder.button(text="🚀 Начать", callback_data="start_button")
         builder.button(text="📖 Помощь", callback_data="help_button")
+        builder.button(text="📸 История генераций", callback_data="show_snapshots")
         builder.button(text="ℹ️ О боте", callback_data="about_button")
 
         builder.adjust(2, 1)

@@ -10,6 +10,7 @@ from app import services
 from app.config.mpstats_ui_config import MPSTATS_UI_CONFIG
 from app.services.mpstats_scraper_service import MPStatsScraperService
 from app.utils.keywords_processor import KeywordsProcessor
+from app.utils.temp_file_manager import temp_manager  # ИМПОРТ МЕНЕДЖЕРА
 
 
 class DataCollectionService:
@@ -18,11 +19,12 @@ class DataCollectionService:
     def __init__(self, config, scraper_service: MPStatsScraperService, **kwargs):
         self.config = config
         self.scraper = scraper_service
-        self.services = self.services = kwargs.get('services', {})
+        self.services = kwargs.get('services', {})
         self.logger = logging.getLogger(__name__)
         self.keywords_processor = KeywordsProcessor(
             preserve_excel=False,
-            target_column="Слова"
+            target_column="Слова",
+            auto_delete_json=True  # Включаем автоудаление JSON
         )
 
         # Пути
@@ -238,8 +240,6 @@ class DataCollectionService:
             self.logger.error(f"Ошибка при скачивании файла: {e}")
             raise
 
-    # app/services/data_collection_service.py - добавьте в конец метода _process_excel_file
-
     async def _process_excel_file(
             self,
             excel_path: str,
@@ -253,14 +253,17 @@ class DataCollectionService:
         try:
             self.logger.info(f"📝 Обработка Excel файла...")
 
-            # Создаем обогащенный JSON
+            # ===== СОЗДАНИЕ JSON С АВТОУДАЛЕНИЕМ =====
+            # Создаем обогащенный JSON с auto_delete=True
             json_path = self.keywords_processor.create_enriched_json(
                 excel_path=excel_path,
                 category=category,
                 purpose=", ".join(purposes) if purposes else "",
                 additional_params=additional_params,
                 json_path=str(
-                    self.keywords_dir / f"{category}_{'_'.join(purposes[:2]) if purposes else 'all'}_enriched.json")
+                    self.keywords_dir / f"{category}_{'_'.join(purposes[:2]) if purposes else 'all'}_enriched.json"
+                ),
+                auto_delete=True  # ВКЛЮЧАЕМ АВТОУДАЛЕНИЕ
             )
 
             # Загружаем данные из JSON
@@ -310,6 +313,16 @@ class DataCollectionService:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
             self.logger.info(f"✅ Финальный JSON сохранен: {json_path}")
+
+            # ===== ЯВНОЕ УДАЛЕНИЕ JSON ПОСЛЕ ИСПОЛЬЗОВАНИЯ =====
+            try:
+                if os.path.exists(json_path):
+                    # Пытаемся удалить через менеджер
+                    temp_manager.delete_file(json_path)
+                    self.logger.info(f"🗑️ JSON файл удален после использования: {json_path}")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Не удалось удалить JSON файл {json_path}: {e}")
+
             return data
 
         except Exception as e:
@@ -343,7 +356,6 @@ class DataCollectionService:
         except Exception as e:
             self.logger.warning(f"⚠️ Не удалось создать PromptService: {e}")
             return None
-
 
     def _simple_keyword_filter(self, data: Dict[str, Any], max_keywords: int = 25) -> Dict[str, Any]:
         """Простая фильтрация ключевых слов без GPT"""

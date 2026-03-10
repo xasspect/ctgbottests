@@ -49,7 +49,7 @@ class ContentGenerationHandler(BaseMessageHandler):
 
         self.router.callback_query.register(
             self.handle_back_to_data,
-            F.data == "back_to_results"
+            F.data.startswith("back_to_data_")  # Изменено с "back_to_results"
         )
 
         # Навигация
@@ -108,14 +108,20 @@ class ContentGenerationHandler(BaseMessageHandler):
         )
 
     async def handle_back_to_data(self, callback: CallbackQuery):
-        """Возврат к данным сессии (в новом сообщении)"""
+        """Возврат к данным сессии"""
+        self.logger.info(f"=== handle_back_to_data called with: {callback.data} ===")
+
         try:
+            # Извлекаем session_id из callback_data
             session_id = callback.data.replace("back_to_data_", "")
+            self.logger.info(f"Extracted session_id: {session_id}")
+
             session_repo = self.repositories['session_repo']
             session = session_repo.get_by_id(session_id)
 
             if not session:
-                await callback.answer("❌ Сессия не найдена")
+                self.logger.warning(f"Session not found: {session_id}")
+                await callback.answer("❌ Сессия не найдена", show_alert=True)
                 return
 
             # Получаем название категории
@@ -126,7 +132,33 @@ class ContentGenerationHandler(BaseMessageHandler):
                 if category:
                     category_name = category.name
 
-            # Формируем клавиатуру для данных
+            # Получаем назначения в читаемом виде
+            purposes_text = "не указаны"
+            if hasattr(session, 'purposes') and session.purposes:
+                if isinstance(session.purposes, list):
+                    purpose_map = {
+                        "wood": "под дерево", "with_pattern": "с рисунком", "kitchen": "кухня",
+                        "tile": "плитка", "3d": "3D", "in_roll": "в рулоне",
+                        "self_adhesive": "самоклеящиеся", "stone": "под камень", "bathroom": "ванная",
+                        "bedroom": "спальня", "brick": "под кирпич", "marble": "под мрамор",
+                        "living_room": "гостиная", "white": "белый"
+                    }
+                    translated = []
+                    for p in session.purposes:
+                        translated.append(purpose_map.get(str(p).lower(), str(p)))
+                    purposes_text = ", ".join(translated)
+                else:
+                    purposes_text = str(session.purposes)
+
+            # Дополнительные параметры
+            additional_params_text = "не указаны"
+            if session.additional_params:
+                if isinstance(session.additional_params, list):
+                    additional_params_text = ", ".join(session.additional_params)
+                else:
+                    additional_params_text = str(session.additional_params)
+
+            # Формируем клавиатуру
             builder = InlineKeyboardBuilder()
             builder.button(
                 text="🎯 Меню генерации",
@@ -136,29 +168,39 @@ class ContentGenerationHandler(BaseMessageHandler):
                 text="✏️ Ручная фильтрация ключей",
                 callback_data=f"manual_filter_{session.id}"
             )
+            builder.button(
+                text="↩️ Назад к данным",
+                callback_data=f"back_to_data_{session_id}"  # ДОЛЖНО БЫТЬ ТАК
+            )
+
             builder.adjust(1)
 
             # Превью ключевых слов
-            preview = "\n".join([f"• {kw}" for kw in session.keywords[:15]])
+            keywords_preview = "\n".join([f"• {kw}" for kw in session.keywords[:15]])
             if len(session.keywords) > 15:
-                preview += f"\n• ... и ещё {len(session.keywords) - 15}"
+                keywords_preview += f"\n• ... и ещё {len(session.keywords) - 15}"
 
             # Отправляем новое сообщение с данными
             await callback.message.answer(
                 f"📊 <b>Собранные данные:</b>\n\n"
                 f"📁 <b>Категория:</b> {category_name}\n"
-                f"🔑 <b>Ключевых слов:</b> {len(session.keywords)}\n\n"
-                f"<b>Ключевые слова:</b>\n{preview}",
+                f"🎯 <b>Назначения:</b> {purposes_text}\n"
+                f"📝 <b>Доп. параметры:</b> {additional_params_text}\n\n"
+                f"🔑 <b>Ключевые слова ({len(session.keywords)}):</b>\n{keywords_preview}",
                 reply_markup=builder.as_markup()
             )
 
             # Удаляем сообщение с меню генерации
-            await callback.message.delete()
+            try:
+                await callback.message.delete()
+            except:
+                pass
+
             await callback.answer()
 
         except Exception as e:
-            self.logger.error(f"Ошибка при возврате к данным: {e}")
-            await callback.answer("❌ Ошибка", show_alert=True)
+            self.logger.error(f"Ошибка в handle_back_to_data: {e}")
+            await callback.answer(f"❌ Ошибка: {str(e)[:50]}", show_alert=True)
 
     def _has_size_in_params(self, additional_params: List[str], keywords: List[str]) -> bool:
         """Проверяет, есть ли указания на размеры в параметрах или ключевых словах"""
@@ -446,6 +488,7 @@ class ContentGenerationHandler(BaseMessageHandler):
             status_msg = await callback.message.answer(f"🤖 <b>Генерирую контент...</b>")
 
             try:
+                # Получаем сервисы
                 prompt_service = self.services.get('prompt')
                 openai_service = self.services.get('openai')
 
@@ -453,6 +496,7 @@ class ContentGenerationHandler(BaseMessageHandler):
                     await self._safe_edit_text(status_msg, "❌ Сервисы не доступны")
                     return
 
+                # Генерируем контент
                 if generation_type == "title":
                     if marketplace == "ozon":
                         content = await self._generate_ozon_title_with_retry(callback, session_id, max_retries=3)
@@ -552,13 +596,13 @@ class ContentGenerationHandler(BaseMessageHandler):
                                 content = corrected
                                 self.logger.info(f"✅ Заголовок скорректирован: {len(content)} символов")
 
-                # ========== СОХРАНЕНИЕ В БД (ИСПРАВЛЕНО) ==========
+                # ========== СОХРАНЕНИЕ В БД (ОСНОВНОЕ) ==========
                 try:
                     session_repo = self.repositories['session_repo']
                     content_repo = self.repositories.get('content_repo')
 
                     if content_repo:
-                        # Получаем полные данные сессии для контекста (синхронно)
+                        # Получаем полные данные сессии для контекста
                         session_context_result = await self._get_session_data(session_id)
                         if session_context_result and session_context_result[0]:
                             session_data = session_context_result[0]
@@ -573,10 +617,9 @@ class ContentGenerationHandler(BaseMessageHandler):
                             }
                             key = (generation_type, marketplace)
 
-                            # Сохраняем в сессию последний сгенерированный контент (синхронно)
+                            # Сохраняем в сессию последний сгенерированный контент
                             if key in content_type_map:
                                 field_name = f"last_generated_{content_type_map[key]}"
-                                # УБИРАЕМ await - это синхронный метод
                                 session_repo.update_session_data(
                                     session_id,
                                     **{field_name: content}
@@ -587,11 +630,11 @@ class ContentGenerationHandler(BaseMessageHandler):
                             if (generation_type == 'long_desc' and marketplace == 'wb') or \
                                     (generation_type == 'desc' and marketplace == 'ozon'):
 
-                                # Получаем все сохраненные данные из сессии (синхронно)
+                                # Получаем все сохраненные данные из сессии
                                 session_obj = session_repo.get_by_id(session_id)
 
                                 if session_obj:
-                                    # Сохраняем в таблицу generated_content (синхронно)
+                                    # Сохраняем в таблицу generated_content
                                     content_repo.save_generation_result(
                                         session_id=session_id,
                                         user_id=callback.from_user.id,
@@ -614,6 +657,50 @@ class ContentGenerationHandler(BaseMessageHandler):
                 except Exception as e:
                     self.logger.error(f"❌ Ошибка сохранения в БД: {e}")
 
+                # ========== СОЗДАНИЕ СНИМКА (НОВОЕ) ==========
+                try:
+                    snapshot_repo = self.repositories.get('snapshot_repo')
+                    if snapshot_repo:
+                        # Получаем контекст сессии
+                        context_data, _ = await self._get_session_data(session_id)
+                        if context_data:
+                            session_obj = context_data['session']
+
+                            # Подготавливаем контекст
+                            context = {
+                                'user_id': callback.from_user.id,
+                                'session_id': session_id,
+                                'category_id': session_obj.category_id,
+                                'category_name': context_data['category'],
+                                'purposes': context_data['purposes'],
+                                'additional_params': context_data['additional_params'],
+                                'keywords': context_data['keywords'],
+                            }
+
+                            # Подготавливаем контент (заполняем только то, что сгенерировали сейчас)
+                            content_dict = {
+                                'wb_title': content if generation_type == 'title' and marketplace == 'wb' else None,
+                                'wb_short_desc': content if generation_type == 'short_desc' and marketplace == 'wb' else None,
+                                'wb_long_desc': content if generation_type == 'long_desc' and marketplace == 'wb' else None,
+                                'ozon_title': content if generation_type == 'title' and marketplace == 'ozon' else None,
+                                'ozon_desc': content if generation_type == 'desc' and marketplace == 'ozon' else None,
+                            }
+
+                            # Создаем снимок
+                            snapshot_repo.create_snapshot(
+                                user_id=callback.from_user.id,
+                                session_id=session_id,
+                                context=context,
+                                content=content_dict,
+                                generation_type=generation_type,
+                                marketplace=marketplace
+                            )
+                            self.logger.info(f"✅ Создан снимок для сессии {session_id}")
+
+                except Exception as e:
+                    self.logger.error(f"❌ Ошибка создания снимка: {e}")
+
+                # Удаляем статусное сообщение
                 await self._safe_delete_message(status_msg)
 
                 result_type = self._get_result_type(generation_type, marketplace)
@@ -625,6 +712,7 @@ class ContentGenerationHandler(BaseMessageHandler):
                 builder.button(text="↩️ К данным", callback_data=f"back_to_data_{session_id}")
                 builder.adjust(1)
 
+                # Форматируем вывод
                 display_text = self._format_output(content, result_type, generation_type, marketplace)
                 await callback.message.answer(display_text, reply_markup=builder.as_markup())
 

@@ -7,11 +7,13 @@ from aiogram.client.default import DefaultBotProperties
 
 from app.bot.handlers.content_generation_handler import ContentGenerationHandler
 from app.bot.handlers.manual_filter_handler import ManualFilterHandler  # ДОБАВИТЬ ИМПОРТ
+from app.bot.handlers.snapshot_handler import SnapshotHandler
 from app.config.config import config
 from app.bot.handlers.start_handler import StartHandler
 from app.bot.handlers.category_handler import CategoryHandler
 from app.bot.handlers.generation_handler import GenerationHandler
 from app.bot.handlers.session_handler import SessionHandler
+
 from app.services import MPStatsService
 
 
@@ -93,12 +95,15 @@ class ContentGeneratorBot:
             from app.database.repositories.category_repo import CategoryRepository
             from app.database.repositories.session_repo import SessionRepository
             from app.database.repositories.content_repo import ContentRepository
+            from app.database.repositories.snapshot_repo import SnapshotRepository
+
 
             self.repositories = {
                 'user_repo': UserRepository(),
                 'category_repo': CategoryRepository(),
                 'session_repo': SessionRepository(),
                 'content_repo': ContentRepository(),
+                'snapshot_repo': SnapshotRepository(),
             }
 
             self.logger.info(f"Repositories initialized: {list(self.repositories.keys())}")
@@ -176,6 +181,7 @@ class ContentGeneratorBot:
             GenerationHandler(self.config, self.services, self.repositories),
             SessionHandler(self.config, self.services, self.repositories),
             ContentGenerationHandler(self.config, self.services, self.repositories),
+            SnapshotHandler(self.config, self.services, self.repositories)
         ]
 
         for handler in self.handlers:
