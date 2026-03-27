@@ -19,8 +19,6 @@ class StartHandler(BaseMessageHandler):
         """Регистрация обработчиков"""
         dp.include_router(self.router)
         self.router.message.register(self.start, Command(commands=["start", "help", "about"]))
-        self.router.message.register(self.handle_categories, Command(commands=["categories"]))
-        self.router.message.register(self.handle_session, Command(commands=["session"]))
         self.router.callback_query.register(self.handle_start_button, F.data == "start_button")
         self.router.callback_query.register(self.handle_help_button, F.data == "help_button")
         self.router.callback_query.register(self.handle_about_button, F.data == "about_button")
@@ -48,12 +46,6 @@ class StartHandler(BaseMessageHandler):
         # Показываем приветственное сообщение с кнопками
         await self.show_welcome_message(message, user)
 
-    async def handle_categories(self, message: Message):
-        """Обработка команды /categories"""
-        # Перенаправляем в CategoryHandler
-        from app.bot.handlers.category_handler import CategoryHandler
-        category_handler = CategoryHandler(self.config, self.services, self.repositories)
-        await category_handler.show_categories_command(message)
 
     async def handle_show_snapshots(self, callback: CallbackQuery):
         """Обработка нажатия кнопки 'История генераций'"""
@@ -64,12 +56,6 @@ class StartHandler(BaseMessageHandler):
         snapshot_handler = SnapshotHandler(self.config, self.services, self.repositories)
         await snapshot_handler.show_snapshots(callback.message)
 
-    async def handle_session(self, message: Message):
-        """Обработка команды /session"""
-        # Перенаправляем в SessionHandler
-        from app.bot.handlers.session_handler import SessionHandler
-        session_handler = SessionHandler(self.config, self.services, self.repositories)
-        await session_handler.show_user_sessions(message)
 
     async def show_welcome_message(self, message: Message, user=None):
         """Показать приветственное сообщение с кнопками"""

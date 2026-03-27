@@ -5,6 +5,9 @@ from sqlalchemy.orm.sync import update
 from app.database.database import database
 import logging
 
+from app.utils.log_codes import LogCodes
+from app.utils.logger import log
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
@@ -14,7 +17,6 @@ class BaseRepository(Generic[T]):
     """Базовый репозиторий для CRUD операций"""
 
     def __init__(self, model_class: T):
-        self.logger = logger
         self.model_class = model_class
 
     def get_session(self) -> Session:
@@ -44,11 +46,10 @@ class BaseRepository(Generic[T]):
         """Создать запись"""
         session = self.get_session()
         try:
-            # Подготавливаем данные
             prepared_kwargs = {}
             for key, value in kwargs.items():
                 if isinstance(value, list):
-                    prepared_kwargs[key] = value  # Оставляем как список
+                    prepared_kwargs[key] = value
                 else:
                     prepared_kwargs[key] = value
 
@@ -57,24 +58,18 @@ class BaseRepository(Generic[T]):
             session.commit()
             session.refresh(instance)
 
-            # Логируем результат
-            self.logger.info(f"✅ Создан {self.model_class.__name__}: {instance.id}")
-            for key in ['purposes', 'keywords']:
-                if hasattr(instance, key):
-                    val = getattr(instance, key)
-                    self.logger.info(f"   {key}: {val} (тип: {type(val)})")
-
+            # Краткий лог без деталей
+            log.info(LogCodes.DB_RECORD_CREATED, table=self.model_class.__tablename__, id=instance.id[:8] if hasattr(instance, 'id') else 'new')
             return instance
         except Exception as e:
             session.rollback()
-            self.logger.error(f"❌ Ошибка создания {self.model_class.__name__}: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=str(e))
             raise
         finally:
             session.close()
 
     def update(self, id: str, **kwargs) -> Optional[T]:
         """Обновить запись"""
-        logger.info(f"🔄 Обновление {self.model_class.__name__} {id}: {kwargs}")
         session = self.get_session()
         try:
             instance = session.get(self.model_class, id)
@@ -83,11 +78,11 @@ class BaseRepository(Generic[T]):
                     setattr(instance, key, value)
                 session.commit()
                 session.refresh(instance)
-                logger.info(f"✅ {self.model_class.__name__} {id} обновлен")
+                log.info(LogCodes.DB_RECORD_UPDATED, table=self.model_class.__tablename__, id=id[:8])
             return instance
         except Exception as e:
             session.rollback()
-            logger.error(f"❌ Ошибка обновления {self.model_class.__name__} {id}: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=str(e))
             raise
         finally:
             session.close()
@@ -100,12 +95,12 @@ class BaseRepository(Generic[T]):
             if instance:
                 session.delete(instance)
                 session.commit()
-                logger.info(f"✅ {self.model_class.__name__} {id} удален")
+                log.info(LogCodes.DB_RECORD_DELETED, table=self.model_class.__tablename__, id=id[:8])
                 return True
             return False
         except Exception as e:
             session.rollback()
-            logger.error(f"❌ Ошибка удаления {self.model_class.__name__} {id}: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=str(e))
             raise
         finally:
             session.close()

@@ -1,5 +1,5 @@
 
-import logging
+from app.utils.logger import log
 from abc import ABC, abstractmethod
 
 
@@ -10,7 +10,6 @@ class BaseMessageHandler(ABC):
         self.config = config
         self.services = services
         self.repositories = repositories
-        self.logger = logging.getLogger(self.__class__.__name__)
 
     @abstractmethod
     async def register(self, dp):

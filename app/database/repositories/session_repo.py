@@ -6,13 +6,15 @@ from app.database.repositories.base import BaseRepository
 from app.database.models.session import UserSession
 import logging
 
+from app.utils.log_codes import LogCodes
+from app.utils.logger import log
+
 logger = logging.getLogger(__name__)
 
 
 class SessionRepository(BaseRepository[UserSession]):
     def __init__(self):
         super().__init__(UserSession)
-        self.logger = logging.getLogger(__name__)  # ДОБАВИТЬ ЭТУ СТРОКУ
 
     # app/database/repositories/session_repo.py
 
@@ -24,29 +26,18 @@ class SessionRepository(BaseRepository[UserSession]):
             if db_session:
                 for key, value in kwargs.items():
                     if hasattr(db_session, key):
-                        # Важно: если это список, он должен быть списком, а не строкой
                         if isinstance(value, list):
-                            setattr(db_session, key, value)  # SQLAlchemy сам преобразует в JSON
-                            self.logger.info(f"🔄 Устанавливаю {key} = {value}")
+                            setattr(db_session, key, value)
                         else:
                             setattr(db_session, key, value)
-                            self.logger.info(
-                                f"🔄 Устанавливаю {key} = {value[:50] if value and isinstance(value, str) else value}")
-                    else:
-                        self.logger.warning(f"⚠️ Поле {key} не существует в модели UserSession")
 
                 session.commit()
                 session.refresh(db_session)
-
-                # Проверяем, как сохранилось
-                saved_value = getattr(db_session, key) if key in kwargs else None
-                self.logger.info(f"✅ Сохранено в БД: {key} = {saved_value}")
-
                 return db_session
             return None
         except Exception as e:
             session.rollback()
-            self.logger.error(f"❌ Ошибка обновления сессии: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=str(e))
             raise
         finally:
             session.close()
@@ -69,34 +60,31 @@ class SessionRepository(BaseRepository[UserSession]):
                     user_session.is_active = False
 
                 session.commit()
-                logger.info(f"✅ Деактивировано {len(active_sessions)} активных сессий пользователя {user_id}")
                 return len(active_sessions)
             except Exception as e:
                 session.rollback()
-                logger.error(f"❌ Ошибка деактивации сессий: {e}")
+                log.error(LogCodes.ERR_DATABASE, error=str(e))
                 raise
 
     def get_active_session(self, user_id: int) -> Optional[UserSession]:
         """Получить активную сессию пользователя"""
         with self.get_session() as session:
-            result = (
-                session.query(UserSession)
-                .filter(
-                    UserSession.user_id == (user_id),
-                    UserSession.is_active == True
+            try:
+                result = (
+                    session.query(UserSession)
+                    .filter(
+                        UserSession.user_id == str(user_id),
+                        UserSession.is_active == True
+                    )
+                    .first()
                 )
-                .first()
-            )
 
-            if result:
-                logger.info(
-                    f"✅ Найдена активная сессия: ID={result.id}, Шаг={result.current_step}, "
-                    f"Категория={result.category_id}"
-                )
-            else:
-                logger.info(f"❌ Активная сессия не найдена для пользователя {user_id}")
-
-            return result
+                if result:
+                    log.info(LogCodes.DB_SESSION_ACTIVE, id=result.id[:8])
+                return result
+            except Exception as e:
+                log.error(LogCodes.ERR_DATABASE, error=str(e))
+                return None
 
     def cleanup_old_sessions(self, user_id: int, keep_count: int = 5):
         """Очистка старых сессий, оставляя только keep_count последних"""
@@ -138,23 +126,21 @@ class SessionRepository(BaseRepository[UserSession]):
                 )
 
             old_sessions = session.query(UserSession).filter(
-                UserSession.user_id == user_id,
+                UserSession.user_id == str(user_id),
                 UserSession.is_active == True
             ).all()
 
             for old_session in old_sessions:
                 old_session.is_active = False
 
-            # Подготавливаем данные для новой сессии
             session_data = {
-                'user_id': user_id,
+                'user_id': str(user_id),
                 'is_active': True,
             }
 
-            # Добавляем остальные параметры, убеждаясь что списки остаются списками
             for key, value in kwargs.items():
                 if isinstance(value, list):
-                    session_data[key] = value  # Список останется списком
+                    session_data[key] = value
                 else:
                     session_data[key] = value
 
@@ -163,15 +149,12 @@ class SessionRepository(BaseRepository[UserSession]):
             session.commit()
             session.refresh(new_session)
 
-            logger.info(f"✅ Создана новая сессия: ID={new_session.id}")
-            logger.info(f"   purposes: {new_session.purposes}")
-            logger.info(f"   keywords: {new_session.keywords}")
-
+            log.info(LogCodes.DB_SESSION_CREATED, id=new_session.id[:8])
             return new_session
 
         except Exception as e:
             session.rollback()
-            logger.error(f"❌ Ошибка создания сессии: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=str(e))
             raise
         finally:
             session.close()

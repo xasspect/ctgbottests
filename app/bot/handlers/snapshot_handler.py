@@ -1,7 +1,7 @@
 # app/bot/handlers/snapshot_handler.py
 import logging
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, FSInputFile  # Добавьте FSInputFile
+from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.bot.handlers.base_handler import BaseMessageHandler
 import json
@@ -9,19 +9,19 @@ from datetime import datetime
 import os
 import pandas as pd
 import tempfile
+from app.utils.logger import log
+from app.utils.log_codes import LogCodes
 
 
 class SnapshotHandler(BaseMessageHandler):
     def __init__(self, config, services, repositories):
         super().__init__(config, services, repositories)
         self.router = Router()
-        self.logger = logging.getLogger(__name__)
 
     async def register(self, dp):
         """Регистрация обработчиков"""
         dp.include_router(self.router)
 
-        # Регистрируем обработчики
         self.router.callback_query.register(
             self.handle_show_snapshots,
             F.data == "show_snapshots"
@@ -43,7 +43,7 @@ class SnapshotHandler(BaseMessageHandler):
             F.data == "refresh_snapshots"
         )
 
-        self.logger.info("SnapshotHandler registered")
+        log.info(LogCodes.SYS_INIT, module="SnapshotHandler")
 
     async def handle_show_snapshots(self, callback: CallbackQuery):
         """Показать список последних снимков"""
@@ -52,8 +52,6 @@ class SnapshotHandler(BaseMessageHandler):
 
     async def show_snapshots(self, message: Message):
         """Показать последние 10 снимков из БД"""
-        self.logger.info("📸 Запрос последних снимков")
-
         snapshot_repo = self.repositories.get('snapshot_repo')
 
         if not snapshot_repo:
@@ -61,8 +59,6 @@ class SnapshotHandler(BaseMessageHandler):
             return
 
         snapshots = snapshot_repo.get_recent_snapshots(limit=10)
-
-        self.logger.info(f"📊 Найдено снимков: {len(snapshots)}")
 
         if not snapshots:
             builder = InlineKeyboardBuilder()
@@ -110,8 +106,6 @@ class SnapshotHandler(BaseMessageHandler):
 
     async def handle_view_snapshot(self, callback: CallbackQuery):
         """Просмотр конкретного снимка"""
-        self.logger.info(f"👁️ Просмотр снимка: {callback.data}")
-
         snapshot_id = callback.data.replace("snapshot_view_", "")
         snapshot_repo = self.repositories.get('snapshot_repo')
 
@@ -120,24 +114,20 @@ class SnapshotHandler(BaseMessageHandler):
             await callback.answer("❌ Снимок не найден", show_alert=True)
             return
 
-        # Формируем детальную информацию
         text = (
             f"📸 <b>Снимок генерации</b>\n"
             f"🕐 {snapshot.created_at.strftime('%d.%m.%Y %H:%M:%S')}\n"
             f"👤 Пользователь: {snapshot.user_id}\n\n"
-
             f"📁 <b>Контекст:</b>\n"
             f"• Категория: {snapshot.category_name} ({snapshot.category_id})\n"
             f"• Назначения: {', '.join(snapshot.purposes) if snapshot.purposes else 'нет'}\n"
             f"• Доп. параметры: {', '.join(snapshot.additional_params) if snapshot.additional_params else 'нет'}\n"
             f"• Ключевых слов: {len(snapshot.keywords) if snapshot.keywords else 0}\n\n"
-
             f"🎯 <b>Генерация:</b>\n"
             f"• Маркетплейс: {snapshot.marketplace}\n"
             f"• Тип: {snapshot.generation_type}\n\n"
         )
 
-        # Добавляем сгенерированный контент
         if snapshot.wb_title:
             text += f"📝 <b>WB Title:</b>\n<code>{snapshot.wb_title}</code>\n\n"
         if snapshot.wb_short_desc:
@@ -153,7 +143,6 @@ class SnapshotHandler(BaseMessageHandler):
             text += f"📄 <b>Ozon Desc:</b> {len(snapshot.ozon_desc)} символов\n"
             text += f"<code>{snapshot.ozon_desc[:200]}...</code>\n\n"
 
-        # Показываем первые 10 ключевых слов
         if snapshot.keywords:
             keywords_preview = "\n".join([f"• {kw}" for kw in snapshot.keywords[:10]])
             if len(snapshot.keywords) > 10:
@@ -178,11 +167,8 @@ class SnapshotHandler(BaseMessageHandler):
         await self.show_snapshots(callback.message)
         await callback.answer()
 
-    # ИСПРАВЛЕННЫЙ МЕТОД ЭКСПОРТА
     async def handle_export_snapshots(self, callback: CallbackQuery):
         """Экспорт всех снимков в Excel"""
-        self.logger.info("📊 Экспорт снимков в Excel")
-
         await callback.answer("🔄 Генерирую Excel файл...")
 
         try:
@@ -193,7 +179,6 @@ class SnapshotHandler(BaseMessageHandler):
                 await callback.message.answer("❌ Нет снимков для экспорта")
                 return
 
-            # Подготавливаем данные для DataFrame
             data = []
             for s in snapshots:
                 data.append({
@@ -208,39 +193,34 @@ class SnapshotHandler(BaseMessageHandler):
                     'Доп. параметры': ', '.join(s.additional_params) if s.additional_params else '',
                     'Ключевых слов': len(s.keywords) if s.keywords else 0,
                     'WB Title': s.wb_title or '',
-                    'WB Short Desc (первые 100)': (s.wb_short_desc[:100] + '...') if s.wb_short_desc and len(
+                    'WB Short Desc': (s.wb_short_desc[:100] + '...') if s.wb_short_desc and len(
                         s.wb_short_desc) > 100 else s.wb_short_desc or '',
                     'WB Long Desc длина': len(s.wb_long_desc) if s.wb_long_desc else 0,
                     'Ozon Title': s.ozon_title or '',
                     'Ozon Desc длина': len(s.ozon_desc) if s.ozon_desc else 0,
                 })
 
-            # Создаем DataFrame
             df = pd.DataFrame(data)
 
-            # Сохраняем во временный файл
             filename = f"snapshots_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
             filepath = os.path.join(tempfile.gettempdir(), filename)
 
             df.to_excel(filepath, index=False)
-            self.logger.info(f"✅ Excel файл создан: {filepath}")
+            log.info(LogCodes.DATA_EXCEL_LOAD, filename=filename)
 
-            # ИСПРАВЛЕНО: Используем FSInputFile для отправки файла
             document = FSInputFile(filepath)
             await callback.message.answer_document(
                 document=document,
                 caption=f"📊 Экспорт всех снимков ({len(snapshots)} записей)"
             )
 
-            # Удаляем временный файл после отправки
             try:
                 os.remove(filepath)
-                self.logger.info(f"🗑️ Временный файл удален: {filepath}")
-            except:
+            except Exception:
                 pass
 
         except Exception as e:
-            self.logger.error(f"Ошибка экспорта: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=f"Export: {e}")
             await callback.message.answer(f"❌ Ошибка экспорта: {str(e)[:200]}")
 
         await callback.answer()

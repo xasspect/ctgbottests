@@ -1,6 +1,5 @@
 # app/services/mpstats_scraper_service.py
 import asyncio
-import logging
 import random
 import time
 import re
@@ -8,17 +7,16 @@ import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 from selenium import webdriver
-from selenium.webdriver import Keys, ActionChains
+from selenium.webdriver import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException
 from app.config.mpstats_ui_config import MPSTATS_UI_CONFIG
-from app.config.config import config, SeleniumConfig
-
+from app.config.config import config
 from app.utils.selenium_tools.driver_manager import ChromeDriverManager
-
-logger = logging.getLogger(__name__)
+from app.utils.logger import log
+from app.utils.log_codes import LogCodes
 
 
 class MPStatsScraperService:
@@ -26,9 +24,11 @@ class MPStatsScraperService:
 
     def __init__(self, config):
         self.config = config
-        self.driver_manager = ChromeDriverManager
+        self.driver_manager = None
         self.download_dir = Path("downloads/mpstats")
-        self.logger = logger
+        self.profile_dir = None
+        self.driver = None
+
         self.email_config = MPSTATS_UI_CONFIG["login"]["email_field"]
         self.password_config = MPSTATS_UI_CONFIG["login"]["password_field"]
         self.requests_btn_config = MPSTATS_UI_CONFIG["tabs"]["requests"]
@@ -36,8 +36,6 @@ class MPStatsScraperService:
         self.textarea_config = MPSTATS_UI_CONFIG["forms"]["textarea"]
         self.find_queries_btn_config = MPSTATS_UI_CONFIG["forms"]["find_queries_btn"]
         self.downloads_config = MPSTATS_UI_CONFIG["download"]["download_btn"]
-        self.driver = None
-        self.profile_dir = None  # ДОБАВЛЕНО: для хранения пути к профилю
 
         self.by_mapping = {
             "NAME": By.NAME,
@@ -52,220 +50,80 @@ class MPStatsScraperService:
 
     async def initialize_scraper(self):
         """Инициализация скрапера"""
-        logger.info("🚀 Инициализация скрапера MPStats с stealth режимом...")
+        log.info(LogCodes.SCR_DRIVER_INIT)
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
-        # ДОБАВЛЕНО: Определяем путь к профилю
         import app
         app_dir = os.path.dirname(os.path.dirname(app.__file__))
         self.profile_dir = os.path.join(app_dir, 'chrome_profile')
-        logger.info(f"📁 Путь к профилю Chrome: {self.profile_dir}")
+
+        # Создаем driver_manager с настройками из config
+        self.driver_manager = ChromeDriverManager(
+            headless=config.selenium.headless,
+            use_stealth=config.selenium.stealth_mode
+        )
 
     async def scrape_categories(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Основной метод скрапинга: авторизация и заполнение формы
+        """Основной метод скрапинга"""
+        log.info(LogCodes.SCR_START)
 
-        Args:
-            params: Параметры запроса от пользователя
-
-        Returns:
-            Dict с результатом выполнения
-        """
-        # ДЕБАГ: выводим полученные параметры
-        logger.info("=" * 50)
-        logger.info("📥 ПОЛУЧЕНЫ ПАРАМЕТРЫ ДЛЯ СКРАПИНГА:")
-        for key, value in params.items():
-            logger.info(f"  - {key}: {value}")
-        logger.info("=" * 50)
-
-        # Валидация параметров
         validation_result = self._validate_params(params)
         if not validation_result["valid"]:
             return validation_result
 
         try:
-            # 1. Настройка драйвера
-            self.driver = await self._setup_driver()
+            self.driver = self.driver_manager.create_driver(
+                download_dir=str(self.download_dir),
+                profile_dir=self.profile_dir,
+                keep_profile=True
+            )
 
-            # 2. Авторизация (будет пропущена если уже есть сессия)
             await self._login_to_mpstats()
 
-            # 3. Заполнение формы ключевыми словами
             form_result = await self._fill_keywords_form(params)
 
             if form_result["success"]:
-                # Возвращаем успешный результат с информацией о драйвере
                 return {
                     "status": "success",
-                    "message": "✅ Форма успешно заполнена",
+                    "message": "Форма успешно заполнена",
                     "driver": self.driver,
                     "query_text": form_result["query_text"],
                     "params": params
                 }
             else:
-                # Закрываем драйвер при ошибке
                 self.cleanup()
                 return {
                     "status": "error",
-                    "message": form_result.get("message", "❌ Не удалось заполнить форму")
+                    "message": form_result.get("message", "Не удалось заполнить форму")
                 }
 
         except Exception as e:
-            logger.error(f"Ошибка при скрапинге: {e}", exc_info=True)
+            log.error(LogCodes.SCR_ERROR, error=str(e))
             self.cleanup()
             return {
                 "status": "error",
-                "message": f"❌ Ошибка при выполнении скрапинга: {str(e)}"
+                "message": f"Ошибка скрапинга: {str(e)}"
             }
 
     def _validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Валидация параметров
-
-        Args:
-            params: Параметры для проверки
-
-        Returns:
-            Dict с результатом валидации
-        """
+        """Валидация параметров"""
         required_fields = ["category", "purpose"]
-
-        # Проверка обязательных полей
-        missing_fields = []
-        for field in required_fields:
-            if field not in params or not params[field]:
-                missing_fields.append(field)
+        missing_fields = [f for f in required_fields if f not in params or not params[f]]
 
         if missing_fields:
             return {
                 "valid": False,
                 "status": "error",
-                "message": f"❌ Не указаны обязательные параметры: {', '.join(missing_fields)}"
-            }
-
-        # Проверка, что все параметры пустые
-        category = params.get("category", "").strip()
-        purpose = self._clean_purpose_text(params.get("purpose", ""))
-        additional_params = params.get("additional_params", [])
-
-        # Если additional_params - строка, преобразуем в список
-        if isinstance(additional_params, str):
-            additional_params = [p.strip() for p in additional_params.split(",") if p.strip()]
-
-        # Проверяем, что есть хотя бы один непустой параметр
-        if not category and not purpose and not additional_params:
-            return {
-                "valid": False,
-                "status": "error",
-                "message": "❌ Все параметры пустые. Укажите хотя бы категорию или назначение."
+                "message": f"Не указаны обязательные параметры: {', '.join(missing_fields)}"
             }
 
         return {"valid": True, "status": "success"}
 
-    def cleanup_downloads(self):
-        """Очистка временных файлов"""
-        try:
-            if hasattr(self, 'downloads_dir') and os.path.exists(self.downloads_dir):
-                # Удаляем временные файлы
-                for file in os.listdir(self.downloads_dir):
-                    if file.endswith('.xlsx') or file.endswith('.json'):
-                        os.remove(os.path.join(self.downloads_dir, file))
-                        self.logger.info(f"Удален временный файл: {file}")
-            self.logger.info("✅ Временные файлы очищены")
-        except Exception as e:
-            self.logger.error(f"❌ Ошибка очистки временных файлов: {e}")
-
-    async def _setup_driver(self) -> webdriver.Chrome:
-        """Настройка Chrome драйвера с stealth режимом и сохранением профиля"""
-        import app
-        from pathlib import Path
-
-        # ИСПРАВЛЕНО: Явно указываем путь для скачивания
-        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        self.download_dir = Path(app_dir) / "downloads" / "mpstats"
-        self.download_dir.mkdir(parents=True, exist_ok=True)
-
-        # ИСПРАВЛЕНО: Используем self.driver_manager как класс, а не экземпляр
-        self.driver_manager = ChromeDriverManager(
-            headless= SeleniumConfig.headless,
-            use_stealth= SeleniumConfig.stealth_mode,
-        )
-
-        stealth_options = {
-            "languages": ["ru-RU", "ru", "en-US", "en"],
-            "vendor": "Google Inc.",
-            "platform": "Win32",
-            "webgl_vendor": "Intel Inc.",
-            "renderer": "Intel Iris OpenGL Engine",
-            "fix_hairline": True,
-            "run_on_insecure_origins": False,
-        }
-
-        user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.159 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        ]
-
-        user_agent = random.choice(user_agents)
-
-        # ИСПРАВЛЕНО: Используем self.profile_dir для сохранения профиля
-        driver = self.driver_manager.create_driver(
-            download_dir=str(self.download_dir),
-            block_videos=True,
-            block_images=False,
-            block_sounds=True,
-            user_agent=user_agent,
-            stealth_options=stealth_options,
-            profile_dir=self.profile_dir,  # ДОБАВЛЕНО: передаем путь к профилю
-            keep_profile=True  # ДОБАВЛЕНО: сохраняем профиль
-        )
-
-        await self._check_download_directory(driver)
-
-        # Случайные задержки
-        driver.implicitly_wait(random.uniform(2, 5))
-
-        # Случайный размер окна
-        window_sizes = [(1920, 1080), (1366, 768), (1536, 864), (1440, 900)]
-        width, height = random.choice(window_sizes)
-        driver.set_window_size(width, height)
-
-        # Случайное положение окна
-        driver.set_window_position(
-            random.randint(0, 100),
-            random.randint(0, 100)
-        )
-
-        logger.info(f"✅ Драйвер создан. Размер окна: {width}x{height}")
-        logger.info(f"📂 Путь для скачивания: {self.download_dir}")
-        logger.info(f"📁 Профиль сохранен в: {self.profile_dir}")
-
-        return driver
-
     async def download_keywords_data(self, driver, params: Dict[str, Any]) -> str:
-        """
-        Полная последовательность действий для скачивания данных
-        Возвращает путь к скачанному Excel файлу
-        """
+        """Скачивание данных"""
         try:
-            logger.info(f"📂 Ожидаю файл в директории: {self.download_dir}")
-            logger.info(f"📂 Абсолютный путь: {os.path.abspath(str(self.download_dir))}")
+            log.info(LogCodes.SCR_DOWNLOAD_START)
 
-            # Создайте тестовый файл для проверки
-            test_file = os.path.join(self.download_dir, "test_check.txt")
-            with open(test_file, 'w') as f:
-                f.write("Test if directory is writable")
-            logger.info(f"✅ Тестовый файл создан: {test_file}")
-
-            from selenium.webdriver.common.by import By
-            from selenium.webdriver.support.ui import WebDriverWait
-            from selenium.webdriver.support import expected_conditions as EC
-            import time
-
-            self.logger.info("🔄 Начинаю процесс скачивания данных...")
-
-            # 2. Переключение на вкладку "Слова"
             try:
                 elements = driver.find_elements(
                     self.by_mapping[self.words_config["by"]],
@@ -273,12 +131,10 @@ class MPStatsScraperService:
                 )
                 if len(elements) > 1:
                     driver.execute_script("arguments[0].click();", elements[1])
-                    self.logger.info("✅ Переключились на 'Слова'")
                     time.sleep(2)
-            except Exception as e:
-                self.logger.warning(f"Не удалось переключиться на 'Слова': {e}")
+            except Exception:
+                pass
 
-            # 3. Скачивание файла (первая кнопка)
             try:
                 elements = driver.find_elements(
                     self.by_mapping[self.downloads_config["by"]],
@@ -286,12 +142,10 @@ class MPStatsScraperService:
                 )
                 if len(elements) > 0:
                     driver.execute_script("arguments[0].click();", elements[0])
-                    self.logger.info("✅ Кликнули на первую кнопку скачивания 1 в стеке")
                     time.sleep(2)
-            except Exception as e:
-                self.logger.warning(f"Не удалось кликнуть первую кнопку: {e}")
+            except Exception:
+                pass
 
-            # 4. Скачивание файла (вторая кнопка)
             try:
                 elements = driver.find_elements(
                     self.by_mapping[self.downloads_config["by"]],
@@ -299,173 +153,94 @@ class MPStatsScraperService:
                 )
                 if len(elements) > 2:
                     driver.execute_script("arguments[0].click();", elements[2])
-                    self.logger.info("✅ Кликнули на вторую кнопку скачивания 3 в стеке")
                     time.sleep(2)
-                else:
+                elif len(elements) > 1:
                     driver.execute_script("arguments[0].click();", elements[1])
-                    self.logger.info("✅ Кликнули на вторую кнопку скачивания 2 в стеке")
+                    time.sleep(2)
+            except Exception:
+                pass
 
-            except Exception as e:
-                self.logger.warning(f"Не удалось кликнуть вторую кнопку: {e}")
-
-            # 5. Ожидание скачивания
             downloaded_file = await self._wait_for_download()
 
             if downloaded_file:
-                self.logger.info(f"✅ Файл скачан: {downloaded_file}")
+                filename = os.path.basename(downloaded_file)
+                size = os.path.getsize(downloaded_file)
+                log.info(LogCodes.SCR_DOWNLOAD_COMPLETE, filename=filename, size=size)
                 return downloaded_file
             else:
                 raise Exception("Не удалось скачать файл")
 
         except Exception as e:
-            self.logger.error(f"Ошибка при скачивании: {e}")
+            log.error(LogCodes.SCR_ERROR, error=f"Download: {e}")
             raise
 
     async def _wait_for_download(self, timeout: int = 120, check_interval: int = 1) -> str:
-        """Ожидание завершения скачивания файла с улучшенной логикой"""
-        import time
-
-        logger.info(f"⏳ Ожидаю скачивания файла в {self.download_dir}. Таймаут: {timeout}с")
-
+        """Ожидание завершения скачивания"""
         start_time = time.time()
         while time.time() - start_time < timeout:
             if not os.path.exists(self.download_dir):
                 await asyncio.sleep(check_interval)
                 continue
 
-            # Ищем все файлы .xlsx и .xls в директории
             for filename in os.listdir(self.download_dir):
                 if filename.endswith('.xlsx') or filename.endswith('.xls'):
                     file_path = os.path.join(self.download_dir, filename)
-
-                    # Проверяем, что файл больше не скачивается
                     if filename.endswith('.crdownload') or filename.endswith('.tmp'):
-                        logger.debug(f"Файл в процессе скачивания (пропускаем): {filename}")
                         continue
-
-                    # Проверяем, что файл имеет нормальный размер и не заблокирован системой
                     try:
-                        file_size = os.path.getsize(file_path)
-                        if file_size > 1024:  # Минимальный размер (1KB)
-                            logger.info(f"✅ Найден готовый Excel файл: {filename} (размер: {file_size} байт)")
+                        if os.path.getsize(file_path) > 1024:
                             return file_path
-                        else:
-                            logger.debug(f"Файл слишком мал, возможно, не скачан: {filename} ({file_size} байт)")
-                    except OSError as e:
-                        logger.debug(f"Не удалось проверить файл {filename}: {e}")
-
+                    except OSError:
+                        pass
             await asyncio.sleep(check_interval)
 
-        # Если цикл завершился по таймауту, сделаем последнюю попытку найти любой Excel файл
-        logger.warning("Таймаут ожидания. Делаю финальную проверку директории...")
-        if os.path.exists(self.download_dir):
-            for filename in os.listdir(self.download_dir):
-                if filename.endswith('.xlsx') or filename.endswith('.xls'):
-                    if not (filename.endswith('.crdownload') or filename.endswith('.tmp')):
-                        final_file = os.path.join(self.download_dir, filename)
-                        logger.info(f"✅ Файл найден после таймаута: {final_file}")
-                        return final_file
-
-        logger.error("❌ Файл не найден после таймаута ожидания.")
         return None
 
     async def _login_to_mpstats(self):
-        """Авторизация в MPStats (будет пропущена если уже есть сессия)"""
-        logger.info("Проверка авторизации в MPStats...")
-
+        """Авторизация в MPStats"""
         try:
-            # Переход на страницу
             self.driver.get('https://mpstats.io/seo/keywords/expanding')
             time.sleep(random.uniform(2, 4))
             current_url = self.driver.current_url
 
-            # Проверяем, нужно ли логиниться
             if 'https://mpstats.io/login' in current_url:
-                logger.info("🔑 Требуется авторизация. Выполняю вход...")
+                log.info(LogCodes.SCR_LOGIN)
 
-                # Ожидание формы логина
                 WebDriverWait(self.driver, 30).until(
                     EC.presence_of_element_located((By.NAME, "mpstats-login-form-name"))
                 )
 
-                # Ввод email
                 email_input = self.driver.find_element(
                     self.by_mapping[self.email_config["by"]],
                     self.email_config["value"]
                 )
-                email = self.config.api.mpstats_email
-                email_input.send_keys(email)
+                email_input.send_keys(self.config.api.mpstats_email)
 
-                # Ввод пароля
                 password_input = self.driver.find_element(
                     self.by_mapping[self.password_config["by"]],
                     self.password_config["value"]
                 )
-                password = self.config.api.mpstats_pswd
-                password_input.send_keys(password)
-
-                # Нажатие Enter для входа
+                password_input.send_keys(self.config.api.mpstats_pswd)
                 password_input.send_keys(Keys.ENTER)
 
-                # Ожидание успешного входа
                 WebDriverWait(self.driver, 30).until(
-                    lambda d: "expanding" in d.current_url or
-                              d.find_elements(
-                                  self.by_mapping[self.requests_btn_config["by"]],
-                                  self.requests_btn_config["value"]
-                              )
+                    lambda d: "expanding" in d.current_url
                 )
-
                 time.sleep(random.uniform(2, 4))
-                self.driver.get('https://mpstats.io/seo/keywords/expanding')
-                logger.info("✅ Авторизация выполнена и сохранена в профиле")
-
             elif current_url == 'https://mpstats.io/seo/keywords/expanding':
-                logger.info('✅ Уже авторизован (использован сохраненный профиль)')
+                log.info(LogCodes.SCR_LOGIN_SKIP)
 
-            # ДОБАВЛЕНО: Сохраняем куки в файл для проверки
-            self._save_cookies()
-
-        except TimeoutException as e:
-            logger.error("Таймаут при авторизации")
-            raise Exception(f"Таймаут при авторизации: {str(e)}")
+        except TimeoutException:
+            log.error(LogCodes.SCR_ERROR, error="Login timeout")
+            raise Exception("Таймаут при авторизации")
         except Exception as e:
-            logger.error(f"Ошибка при авторизации: {e}")
-            raise Exception(f"Ошибка авторизации: {str(e)}")
-
-    def _save_cookies(self):
-        """Сохраняет куки в файл для отладки"""
-        try:
-            if self.driver:
-                cookies = self.driver.get_cookies()
-                cookies_file = os.path.join(self.profile_dir, 'cookies.json')
-                import json
-                with open(cookies_file, 'w') as f:
-                    json.dump(cookies, f, indent=2)
-                logger.info(f"🍪 Куки сохранены в {cookies_file}")
-        except Exception as e:
-            logger.warning(f"Не удалось сохранить куки: {e}")
+            log.error(LogCodes.SCR_ERROR, error=f"Login: {e}")
+            raise
 
     async def _fill_keywords_form(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Заполнение формы ключевыми словами
-
-        Args:
-            params: Параметры для заполнения
-
-        Returns:
-            Dict с результатом заполнения
-        """
+        """Заполнение формы ключевыми словами"""
         try:
-            # 1. Клик на вкладку "Запросы"
-            logger.info("Поиск вкладки 'Запросы'...")
-
             try:
-                WebDriverWait(self.driver, 15).until(
-                    EC.element_to_be_clickable((self.by_mapping[self.requests_btn_config["by"]],
-                                                self.requests_btn_config["value"]))
-                )
-
                 elements = self.driver.find_elements(
                     self.by_mapping[self.requests_btn_config["by"]],
                     self.requests_btn_config["value"]
@@ -474,266 +249,88 @@ class MPStatsScraperService:
                     elements[1].click()
                 else:
                     elements[0].click()
-
-                time.sleep(random.uniform(0.3, 0.7))
-                logger.info("✅ Кликнули на вкладку 'Запросы'")
                 time.sleep(random.uniform(1, 2))
-
-            except TimeoutException:
-                # Пробуем альтернативные варианты
-                requests_tabs = self.driver.find_elements(
-                    By.XPATH,
-                    "//*[contains(text(), 'Запросы') or contains(text(), 'Запрос')]"
-                )
-
-                if requests_tabs:
-                    if len(requests_tabs) > 1:
-                        requests_tabs[1].click()
-                    else:
-                        requests_tabs[0].click()
-                    logger.info("✅ Кликнули на альтернативную вкладку 'Запросы'")
-                else:
-                    logger.warning("Вкладка 'Запросы' не найдена, продолжаем...")
-
-            # 2. Поиск textarea
-            logger.info("Поиск textarea...")
+            except Exception:
+                pass
 
             textarea = self.driver.find_element(
                 self.by_mapping[self.textarea_config["by"]],
                 self.textarea_config["value"]
             )
 
-            # 3. Формирование текста из параметров
             query_text = self._build_query_text(params)
             if not query_text:
                 return {
                     "success": False,
-                    "message": "❌ Не удалось сформировать текст запроса из параметров"
+                    "message": "Не удалось сформировать текст запроса"
                 }
 
-            logger.info(f"Сформирован текст запроса: '{query_text}'")
-
-            # 4. Очищаем textarea и заполняем
             textarea.clear()
             textarea.send_keys(query_text)
-
-            logger.info("✅ Textarea заполнена")
+            log.info(LogCodes.SCR_FORM_FILL)
             time.sleep(3)
 
-            # 5. Нажимаем "Подобрать запросы"
             element = self.driver.find_element(
                 self.by_mapping[self.find_queries_btn_config["by"]],
                 self.find_queries_btn_config["value"]
             )
-            # клик по кнопке игнорирую фокус
             self.driver.execute_script("arguments[0].click();", element)
 
-            logger.info("✅ Форма отправлена (клик по кнопке 'Подобрать запросы')")
-
-            # 6. Ждем некоторое время для обработки
+            log.info(LogCodes.SCR_WAIT, time=40)
             time.sleep(40)
 
             return {
                 "success": True,
                 "query_text": query_text,
-                "message": "Форма успешно заполнена и отправлена"
+                "message": "Форма успешно заполнена"
             }
 
-        except TimeoutException as e:
-            logger.error(f"Таймаут при заполнении формы: {e}")
-            return {
-                "success": False,
-                "message": f"Таймаут при заполнении формы: {str(e)}"
-            }
         except Exception as e:
-            logger.error(f"Ошибка при заполнении формы: {e}")
+            log.error(LogCodes.SCR_ERROR, error=f"Form fill: {e}")
             return {
                 "success": False,
-                "message": f"Ошибка при заполнении формы: {str(e)}"
+                "message": f"Ошибка заполнения формы: {str(e)}"
             }
 
     def _build_query_text(self, params: Dict[str, Any]) -> str:
-        """
-        Формирование текста запроса из параметров
-
-        Args:
-            params: Параметры от пользователя
-
-        Returns:
-            Текст для вставки в textarea или пустая строка при ошибке
-        """
+        """Формирование текста запроса"""
         parts = []
 
-        # ДЕБАГ: выводим полученные параметры
-        logger.info(f"📝 Параметры для формирования запроса: {params}")
-
-        # 1. Категория
-        # category = params.get('category', '').strip()
-        # if category:
-        #     # Маппинг категорий на русский
-        #     category_map = {
-        #         "decorative_panels": "декоративные панели",
-        #         "soft_panels": "мягкие панели",
-        #         "self_adhesive_wallpaper": "самоклеящиеся обои",
-        #         "pet_panels": "ПЭТ панели",
-        #         "baby_panels": "3D панели",
-        #         "aprons": "фартуки",
-        #         "3d_panels": "3D панели",
-        #         "battens": "реечные панели"
-        #     }
-        #     category_name = category_map.get(category, category)
-        #     parts.append(category_name)
-        #     logger.info(f"✅ Категория: {category_name}")
-
-        # 2. Описание категории (из БД)
         category_description = params.get('category_description', '').strip()
         if category_description:
-            logger.info(f"📋 Описание категории получено: {category_description[:100]}...")
             parts.append(category_description)
-            logger.info(f"✅ Добавлено полное описание категории ({len(category_description)} символов)")
 
-        # 3. Назначение (поддерживаем оба варианта: purpose и purposes)
         purpose = params.get('purpose', '')
-        purposes = params.get('purposes', [])
-
-        # Маппинг назначений на русский
         purpose_map = {
-            "wood": "под дерево",
-            "with_pattern": "С рисунком",
-            "kitchen": "кухня",
-            "tile": "Плитка",
-            "3d": "3Д",
-            "in_roll": "В рулоне",
-            "self_adhesive": "Самоклеящиеся",
-            "stone": "Под камень",
-            "bathroom": "ванная",
-            "bedroom": "спальня",
-            "brick": "Под кирпич",
-            "marble": "Под мрамор",
-            "living_room": "гостиная",
-            "white": "белый"
+            "wood": "под дерево", "with_pattern": "с рисунком", "kitchen": "кухня",
+            "tile": "плитка", "3d": "3D", "in_roll": "в рулоне",
+            "self_adhesive": "самоклеящиеся", "stone": "под камень", "bathroom": "ванная",
+            "bedroom": "спальня", "brick": "под кирпич", "marble": "под мрамор",
+            "living_room": "гостиная", "white": "белый"
         }
 
-        # Если есть purpose строка
         if purpose:
-            logger.info(f"🎯 Обработка purpose как строки: '{purpose}'")
-
-            # Разбиваем строку если есть разделители
             if "," in purpose:
-                purpose_items = [p.strip() for p in purpose.split(",") if p.strip()]
+                purpose_items = [p.strip() for p in purpose.split(",")]
             else:
                 purpose_items = [purpose.strip()]
 
-            # Переводим каждый элемент
             for p in purpose_items:
                 translated = purpose_map.get(p.lower(), p)
                 parts.append(translated)
-                logger.info(f"✅ Добавлено назначение (переведено): {translated}")
 
-        # Если есть purposes массив
-        elif isinstance(purposes, list) and purposes:
-            for p in purposes:
-                if p and isinstance(p, str):
-                    purpose_clean = purpose_map.get(p.lower(), p)
-                    purpose_clean = self._clean_purpose_text(purpose_clean)
-                    if purpose_clean:
-                        parts.append(purpose_clean)
-                        logger.info(f"✅ Добавлено назначение из purposes: {purpose_clean}")
-
-        # 4. Дополнительные параметры
         additional_params = params.get('additional_params', [])
         if additional_params:
-            logger.info(f"📝 Доп. параметры: {additional_params}")
             if isinstance(additional_params, str):
-                additional_params = [p.strip() for p in additional_params.split(',') if p.strip()]
+                additional_params = [p.strip() for p in additional_params.split(',')]
+            for param in additional_params:
+                if param and param.strip():
+                    parts.append(param.strip())
 
-            if isinstance(additional_params, list):
-                for param in additional_params:
-                    if param and isinstance(param, str):
-                        param_clean = param.strip()
-                        if param_clean:
-                            parts.append(param_clean)
-                            logger.info(f"✅ Добавлен доп. параметр: {param_clean}")
-
-        # 5. Проверяем, что есть хотя бы одна часть
-        if not parts:
-            logger.error("❌ Не удалось сформировать текст запроса: все параметры пустые")
-            return ""
-
-        # Объединяем все части
-        query_text = " ".join(parts)
-
-        logger.info(f"📝 ФИНАЛЬНЫЙ текст запроса: '{query_text}'")
-        logger.info(f"📏 Длина: {len(query_text)} символов")
-        logger.info(f"🔤 Частей: {len(parts)}")
-
-        return query_text
-
-    async def _check_download_directory(self, driver):
-        """Проверка настроек директории скачивания"""
-        try:
-            # Проверяем существование директории
-            if os.path.exists(self.download_dir):
-                logger.info(f"✅ Директория существует: {self.download_dir}")
-                logger.info(f"   Содержимое: {os.listdir(self.download_dir)}")
-            else:
-                logger.error(f"❌ Директория не существует: {self.download_dir}")
-                os.makedirs(self.download_dir, exist_ok=True)
-                logger.info(f"   Создана директория: {self.download_dir}")
-        except Exception as e:
-            logger.warning(f"Не удалось проверить директорию скачивания: {e}")
-
-    def _clean_purpose_text(self, purpose: str) -> str:
-        """
-        Очистка текста назначения от эмодзи и лишних символов
-
-        Args:
-            purpose: Текст назначения
-
-        Returns:
-            Очищенный текст
-        """
-        if not purpose:
-            return ""
-
-        # Удаляем эмодзи и другие не-буквенно-цифровые символы (кроме пробелов)
-        cleaned = re.sub(r'[^\w\s]', '', purpose).strip()
-
-        # Если после очистки остался пустой текст, возвращаем оригинал без эмодзи
-        if not cleaned:
-            # Более мягкая очистка: оставляем кириллицу, латиницу, цифры и пробелы
-            cleaned = re.sub(r'[^\u0400-\u04FFa-zA-Z0-9\s]', '', purpose).strip()
-
-        return cleaned
+        return " ".join(parts) if parts else ""
 
     def cleanup(self):
         """Очистка ресурсов"""
-        try:
-            # Проверяем наличие драйвера безопасно
-            if hasattr(self, 'driver') and self.driver:
-                try:
-                    self.driver.quit()
-                    logger.info("✅ Драйвер закрыт")
-                except:
-                    logger.warning("⚠️ Не удалось закрыть драйвер (уже закрыт)")
-                finally:
-                    self.driver = None
-            else:
-                logger.info("ℹ️ Драйвер уже закрыт или не существует")
-
-        except Exception as e:
-            logger.error(f"❌ Ошибка при очистке: {e}")
-
-        # Очистка временных файлов (но НЕ трогаем chrome_profile)
-        try:
-            if hasattr(self, 'download_dir') and os.path.exists(self.download_dir):
-                for file in os.listdir(self.download_dir):
-                    if file.endswith('.tmp') or file.endswith('.crdownload'):
-                        file_path = os.path.join(self.download_dir, file)
-                        try:
-                            os.remove(file_path)
-                        except:
-                            pass
-                logger.info("🗑️ Временные файлы очищены")
-        except Exception as e:
-            logger.error(f"❌ Ошибка при очистке файлов: {e}")
+        if self.driver_manager:
+            self.driver_manager.quit()
+        self.driver = None

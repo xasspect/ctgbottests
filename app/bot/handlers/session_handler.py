@@ -20,19 +20,6 @@ class SessionHandler(BaseMessageHandler):
         self.router.message.register(self.show_user_sessions, Command(commands=["session"]))
         self.router.callback_query.register(self.handle_session_select, F.data.startswith("session_"))
         self.router.callback_query.register(self.handle_back_to_sessions, F.data == "back_to_sessions")
-        self.router.callback_query.register(self.handle_back_to_menu_from_session, F.data == "back_to_main_menu")
-
-    async def handle_back_to_menu_from_session(self, callback: CallbackQuery):
-        """Возврат в главное меню из сессий"""
-        await callback.answer()
-
-        # Перенаправляем в StartHandler
-        from app.bot.handlers.start_handler import StartHandler
-        start_handler = StartHandler(self.config, self.services, self.repositories)
-        user_id = callback.from_user.id
-        user_repo = self.repositories['user_repo']
-        user = user_repo.get_by_telegram_id(user_id)
-        await start_handler.show_welcome_message(callback.message, user)
 
     async def show_user_sessions(self, message: Message):
         """Показать последние 5 сессий пользователя"""

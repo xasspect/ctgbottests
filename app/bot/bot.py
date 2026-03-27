@@ -14,6 +14,9 @@ from app.bot.handlers.category_handler import CategoryHandler
 from app.bot.handlers.generation_handler import GenerationHandler
 from app.bot.handlers.session_handler import SessionHandler
 
+from app.utils.logger import log
+from app.utils.log_codes import LogCodes
+
 from app.services import MPStatsService
 
 
@@ -27,50 +30,37 @@ class ContentGeneratorBot:
         self.handlers = []
         self.services = {}
         self.repositories = {}
-        self.logger = logging.getLogger(__name__)
 
     async def initialize(self):
         """Инициализация бота"""
-        self.logger.info("Initializing Telegram Bot (aiogram)...")
+        log.info(LogCodes.SYS_INIT, module="Bot")
 
-        # Инициализация БД
         from app.database.database import database
         database.connect()
         database.create_tables()
 
-        # Инициализация репозиториев
-
         await self._sync_admin_users()
-
         await self._initialize_repositories()
-
-        # Инициализация сервисов
         await self._initialize_services()
-
-        # Инициализация aiogram
         await self._initialize_aiogram()
-
-        # Инициализация обработчиков
         await self._initialize_handlers()
 
-        self.logger.info("Bot initialization completed")
+        log.info(LogCodes.SYS_START)
 
     async def _sync_admin_users(self):
         """Синхронизирует список администраторов из конфигурации с базой данных."""
         try:
             admin_ids = self.config.telegram.admin_ids
             if not admin_ids:
-                self.logger.info("Нет администраторов для синхронизации")
                 return
 
             user_repo = self.repositories.get('user_repo')
             if not user_repo:
-                self.logger.error("Репозиторий пользователей не найден")
+                log.error(LogCodes.ERR_DATABASE, error="User repo not found")
                 return
 
             for admin_id in admin_ids:
                 try:
-                    # Получаем или создаём пользователя, убеждаемся, что роль 'admin'
                     user = user_repo.get_or_create(
                         telegram_id=admin_id,
                         username=f"admin_{admin_id}",
@@ -78,15 +68,13 @@ class ContentGeneratorBot:
                     )
                     if user.role != 'admin':
                         user_repo.update(user.id, role='admin')
-                        self.logger.info(f"✅ Пользователь {admin_id} повышен до администратора")
-                    else:
-                        self.logger.debug(f"Пользователь {admin_id} уже администратор")
                 except Exception as e:
-                    self.logger.error(f"❌ Ошибка при обработке админа {admin_id}: {e}")
+                    log.error(LogCodes.ERR_DATABASE, error=f"Admin sync: {e}")
 
-            self.logger.info(f"✅ Синхронизировано {len(admin_ids)} администраторов")
+            log.info(LogCodes.DB_RECORD_UPDATED, table="users", id=f"{len(admin_ids)} admins")
+
         except Exception as e:
-            self.logger.error(f"❌ Ошибка синхронизации администраторов: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=f"Admin sync: {e}")
 
     async def _initialize_repositories(self):
         """Инициализация репозиториев"""
@@ -97,7 +85,6 @@ class ContentGeneratorBot:
             from app.database.repositories.content_repo import ContentRepository
             from app.database.repositories.snapshot_repo import SnapshotRepository
 
-
             self.repositories = {
                 'user_repo': UserRepository(),
                 'category_repo': CategoryRepository(),
@@ -106,58 +93,46 @@ class ContentGeneratorBot:
                 'snapshot_repo': SnapshotRepository(),
             }
 
-            self.logger.info(f"Repositories initialized: {list(self.repositories.keys())}")
+            log.info(LogCodes.DB_RECORD_CREATED, table="repositories", id=f"{len(self.repositories)}")
 
         except Exception as e:
-            self.logger.error(f"Error initializing repositories: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=f"Repositories init: {e}")
             self.repositories = {}
 
-    # app/bot/bot.py - в методе _initialize_services
-
     async def _initialize_services(self):
-        """Инициализация сервисов"""
+        """Инициализация сервисов (один раз при старте)"""
         from app.services.openai_service import OpenAIService
-        from app.services.content_service import ContentService
         from app.services.prompt_service import PromptService
         from app.services.mpstats_scraper_service import MPStatsScraperService
         from app.services.data_collection_service import DataCollectionService
 
         try:
+            # Создаем сервисы один раз
             openai_service = OpenAIService()
-            mpstats_service = MPStatsService()
-            content_service = ContentService(mpstats_service, openai_service)
             prompt_service = PromptService()
             scraper_service = MPStatsScraperService(self.config)
 
-            # Создаем data_collection_service с services в kwargs
             data_collection_service = DataCollectionService(
                 config=self.config,
                 scraper_service=scraper_service,
-                services={  # Передаем как именованный аргумент
+                services={
                     'openai': openai_service,
                     'prompt': prompt_service,
-                    'content': content_service
                 }
             )
 
             self.services = {
                 'openai': openai_service,
-                'mpstats': mpstats_service,
-                'content': content_service,
                 'prompt': prompt_service,
                 'scraper': scraper_service,
                 'data_collection': data_collection_service,
             }
 
-            self.logger.info("Все сервисы инициализированы")
-            self.logger.info(f"Available services: {list(self.services.keys())}")
+            log.info(LogCodes.SYS_INIT, module="Services (singleton)")
 
         except Exception as e:
-            self.logger.error(f"❌ Error initializing services: {e}")
-            self.services = {
-                'openai': OpenAIService(),
-                'content': ContentService(None, OpenAIService())
-            }
+            log.error(LogCodes.ERR_MPSTATS, error=f"Services init: {e}")
+            self.services = {}
 
     async def _initialize_aiogram(self):
         """Инициализация aiogram"""
@@ -166,10 +141,10 @@ class ContentGeneratorBot:
                 token=self.config.telegram.bot_token,
                 default=DefaultBotProperties(parse_mode=ParseMode.HTML)
             )
-            self.dp = Dispatcher()  # Передаем storage в Dispatcher
-            self.logger.info("Aiogram initialized")
+            self.dp = Dispatcher()
+            log.info(LogCodes.SYS_INIT, module="Aiogram")
         except Exception as e:
-            self.logger.error(f"Error initializing aiogram: {e}")
+            log.error(LogCodes.ERR_MPSTATS, error=f"Aiogram init: {e}")
             raise
 
     async def _initialize_handlers(self):
@@ -187,34 +162,31 @@ class ContentGeneratorBot:
         for handler in self.handlers:
             if handler:
                 await handler.register(self.dp)
-                self.logger.info(f"Registered handler: {handler.__class__.__name__}")
-            else:
-                self.logger.error(f"Handler is None!")
+                log.info(LogCodes.SYS_INIT, module=handler.__class__.__name__)
 
     async def run(self):
         """Запуск бота"""
-        self.logger.info("Starting bot polling...")
+        log.info(LogCodes.SYS_INIT, module="Polling")
         try:
             await self.dp.start_polling(self.bot)
         except Exception as e:
-            self.logger.error(f"Error in polling: {e}")
+            log.error(LogCodes.ERR_MPSTATS, error=f"Polling: {e}")
             raise
+
 
     async def shutdown(self):
         """Завершение работы"""
-        self.logger.info("Shutting down bot...")
+        log.info(LogCodes.SYS_SHUTDOWN)
 
         try:
             if self.bot:
                 await self.bot.session.close()
-                self.logger.info("Bot session closed")
 
             from app.database.database import database
             if database:
                 database.close()
-                self.logger.info("Database connection closed")
 
         except Exception as e:
-            self.logger.error(f"Error during shutdown: {e}")
+            log.error(LogCodes.ERR_MPSTATS, error=f"Shutdown: {e}")
 
-        self.logger.info("Bot shutdown completed")
+        log.info(LogCodes.SYS_STOP)

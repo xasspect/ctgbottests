@@ -10,7 +10,9 @@ from app import services
 from app.config.mpstats_ui_config import MPSTATS_UI_CONFIG
 from app.services.mpstats_scraper_service import MPStatsScraperService
 from app.utils.keywords_processor import KeywordsProcessor
-from app.utils.temp_file_manager import temp_manager  # ИМПОРТ МЕНЕДЖЕРА
+from app.utils.temp_file_manager import temp_manager
+from app.utils.logger import log
+from app.utils.log_codes import LogCodes
 
 
 class DataCollectionService:
@@ -20,14 +22,12 @@ class DataCollectionService:
         self.config = config
         self.scraper = scraper_service
         self.services = kwargs.get('services', {})
-        self.logger = logging.getLogger(__name__)
         self.keywords_processor = KeywordsProcessor(
             preserve_excel=False,
             target_column="Слова",
-            auto_delete_json=True  # Включаем автоудаление JSON
+            auto_delete_json=True
         )
 
-        # Пути
         self.downloads_dir = Path(config.paths.mpstats_downloads_dir)
         self.keywords_dir = Path(config.paths.keywords_dir)
 
@@ -36,96 +36,60 @@ class DataCollectionService:
             category: str,
             purpose: Union[str, List[str]] = "",
             additional_params: List[str] = None,
-            category_description: str = None
+            category_description: str = None,
+            max_keywords: int = 13
     ) -> Dict[str, Any]:
-        """
-        Полный цикл сбора данных:
-        1. Скрапинг MPStats
-        2. Скачивание Excel
-        3. Обработка в JSON
-        4. Формирование результата
-
-        Args:
-            category: Название категории
-            purpose: Назначение товара (строка или массив строк)
-            additional_params: Дополнительные параметры
-            category_description: Описание категории из БД
-        """
+        """Полный цикл сбора данных с обязательной GPT-фильтрацией"""
         try:
-            self.logger.info(f"🚀 Начинаю сбор данных для категории: {category}")
+            log.info(LogCodes.SCR_START)
 
-            # ДЕБАГ: выводим все полученные параметры
-            self.logger.info(f"📋 Полученные параметры:")
-            self.logger.info(f"  - category: {category}")
-            self.logger.info(f"  - purpose: {purpose}")
-            self.logger.info(f"  - additional_params: {additional_params}")
-            self.logger.info(f"  - category_description: {category_description}")
-
-            if category_description:
-                self.logger.info(f"📝 Описание категории (полное): {category_description}")
-                self.logger.info(f"📝 Описание категории (первые 100 символов): {category_description[:100]}...")
-            else:
-                self.logger.warning("⚠️ Описание категории не получено (None или пустая строка)")
-
-            # Нормализуем purpose: преобразуем в массив строк
             purposes_list = self._normalize_purpose(purpose)
 
-            self.logger.info(f"🎯 Назначения: {purposes_list}")
-
-            # 1. Подготовка параметров
             params = {
                 "category": category,
-                "category_description": category_description or "",  # <-- ПЕРЕДАЕМ описание!
-                "purposes": purposes_list,  # Передаем как массив
+                "category_description": category_description or "",
+                "purposes": purposes_list,
                 "additional_params": additional_params or []
             }
-
-            # 2. Запуск скрапинга и скачивания Excel
-            self.logger.info("🔍 Запуск скрапинга MPStats...")
-            self.logger.info(f"📤 Параметры для скрапера (с описанием): {params}")
 
             excel_file = await self._run_scraping_and_download(params)
 
             if not excel_file:
                 raise Exception("Не удалось скачать файл с MPStats")
 
-            self.logger.info(f"✅ Файл скачан: {excel_file}")
-
-            self.logger.info("🔄 Закрываю Chrome драйвер...")
             if hasattr(self.scraper, 'driver') and self.scraper.driver:
                 try:
                     self.scraper.driver.quit()
                     self.scraper.driver = None
-                    self.logger.info("✅ Chrome драйвер закрыт")
+                    log.info(LogCodes.SCR_DRIVER_CLOSE)
                 except Exception as e:
-                    self.logger.warning(f"⚠️ Не удалось закрыть драйвер: {e}")
+                    log.warning(LogCodes.SCR_ERROR, error=f"Driver close: {e}")
 
-            # 3. Обработка Excel в JSON
-            self.logger.info("🔄 Обработка Excel файла...")
-            result = await self._process_excel_file(
+            # Обрабатываем Excel и применяем GPT-фильтрацию
+            filtered_data = await self._process_excel_file(
                 excel_path=excel_file,
                 category=category,
                 purposes=purposes_list,
                 additional_params=additional_params or [],
-                category_description=category_description  # <-- Передаем описание
+                category_description=category_description,
+                max_keywords=max_keywords
             )
 
-            # 4. Очистка временных файлов
             await self._cleanup_temp_files(excel_file)
 
-            self.logger.info(f"✅ Данные собраны. Ключевых слов: {len(result.get('keywords', []))}")
+            log.info(LogCodes.SCR_SUCCESS)
 
             return {
                 "status": "success",
                 "category": category,
                 "purposes": purposes_list,
                 "additional_params": additional_params or [],
-                "keywords": result.get("keywords", []),
-                "keywords_preview": result.get("keywords", [])[:15]
+                "keywords": filtered_data.get("keywords", []),
+                "keywords_preview": filtered_data.get("keywords", [])[:15]
             }
 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка сбора данных: {e}", exc_info=True)
+            log.error(LogCodes.SCR_ERROR, error=str(e))
             return {
                 "status": "error",
                 "message": str(e),
@@ -137,90 +101,36 @@ class DataCollectionService:
             }
 
     def _normalize_purpose(self, purpose: Union[str, List[str], None]) -> List[str]:
-        """
-        Нормализует purpose в массив строк
-
-        Args:
-            purpose: Назначение (строка, массив или None)
-
-        Returns:
-            Нормализованный массив назначений
-        """
+        """Нормализует purpose в массив строк"""
         if not purpose:
             return []
 
         if isinstance(purpose, list):
-            # Фильтруем пустые строки
             return [str(p).strip() for p in purpose if str(p).strip()]
         elif isinstance(purpose, str):
-            # Если строка с разделителями, разбиваем
             if "," in purpose:
                 return [p.strip() for p in purpose.split(",") if p.strip()]
             else:
                 return [purpose.strip()] if purpose.strip() else []
         else:
-            # Преобразуем в строку
             return [str(purpose).strip()]
-
-    async def _cleanup_temp_files(self, excel_file: str):
-        """Очистка временных файлов"""
-        try:
-            # Удаляем Excel файл
-            if os.path.exists(excel_file):
-                os.remove(excel_file)
-                self.logger.info(f"🗑️ Удален временный Excel файл: {excel_file}")
-
-            # Также можно удалить другие временные файлы, если они есть
-            # Например, проверяем директорию загрузок
-            if os.path.exists(self.downloads_dir):
-                for file in os.listdir(self.downloads_dir):
-                    file_path = os.path.join(self.downloads_dir, file)
-                    if file.endswith('.crdownload') or file.endswith('.tmp'):
-                        try:
-                            os.remove(file_path)
-                            self.logger.info(f"🗑️ Удален временный файл: {file}")
-                        except Exception as e:
-                            self.logger.warning(f"⚠️ Не удалось удалить временный файл {file}: {e}")
-
-        except Exception as e:
-            self.logger.warning(f"⚠️ Ошибка при очистке временных файлов: {e}")
-            # Не поднимаем исключение, т.к. это не критичная операция
 
     async def _run_scraping_and_download(self, params: Dict[str, Any]) -> str:
         """Запуск скрапинга и скачивания Excel файла"""
         try:
-            # Инициализация скрапера
             await self.scraper.initialize_scraper()
 
-            # Для обратной совместимости с MPStatsScraperService
-            # преобразуем массив purposes в строку
             scraper_params = params.copy()
 
-            # ДЕБАГ: выводим ВСЕ параметры перед передачей
-            self.logger.info(f"📤 ПЕРЕДАЧА в скрапер. Все параметры: {scraper_params}")
-
-            # Преобразуем purposes в строку для скрапера
             if "purposes" in scraper_params:
                 purposes_list = scraper_params["purposes"]
                 if isinstance(purposes_list, list) and purposes_list:
-                    # Объединяем в строку для scraper_service
                     scraper_params["purpose"] = ", ".join(purposes_list)
-                    self.logger.info(f"🎯 Преобразовано purposes в purpose: {scraper_params['purpose']}")
                 elif purposes_list:
                     scraper_params["purpose"] = str(purposes_list)
-                # Удаляем ключ purposes чтобы не было конфликта
                 if "purposes" in scraper_params:
                     del scraper_params["purposes"]
-                    self.logger.info("🗑️ Удален ключ purposes из параметров")
 
-            # Проверяем, что category_description есть в параметрах
-            if "category_description" in scraper_params:
-                self.logger.info(f"📝 category_description в параметрах: '{scraper_params['category_description']}'")
-                self.logger.info(f"📏 Длина description: {len(scraper_params['category_description'])} символов")
-            else:
-                self.logger.warning("⚠️ category_description отсутствует в параметрах!")
-
-            # Запуск скрапинга
             result = await self.scraper.scrape_categories(scraper_params)
 
             if result.get("status") != "success":
@@ -231,13 +141,12 @@ class DataCollectionService:
             if not driver:
                 raise Exception("Драйвер не инициализирован")
 
-            # Скачивание данных
             excel_file = await self.scraper.download_keywords_data(driver, scraper_params)
 
             return excel_file
 
         except Exception as e:
-            self.logger.error(f"Ошибка при скачивании файла: {e}")
+            log.error(LogCodes.SCR_ERROR, error=str(e))
             raise
 
     async def _process_excel_file(
@@ -249,12 +158,9 @@ class DataCollectionService:
             category_description: str = None,
             max_keywords: int = 13
     ) -> Dict[str, Any]:
-        """Обработка Excel файла через KeywordsProcessor с GPT-фильтрацией"""
+        """Обработка Excel файла через KeywordsProcessor с обязательной GPT-фильтрацией"""
         try:
-            self.logger.info(f"📝 Обработка Excel файла...")
-
-            # ===== СОЗДАНИЕ JSON С АВТОУДАЛЕНИЕМ =====
-            # Создаем обогащенный JSON с auto_delete=True
+            # Создаем обогащенный JSON
             json_path = self.keywords_processor.create_enriched_json(
                 excel_path=excel_path,
                 category=category,
@@ -263,111 +169,108 @@ class DataCollectionService:
                 json_path=str(
                     self.keywords_dir / f"{category}_{'_'.join(purposes[:2]) if purposes else 'all'}_enriched.json"
                 ),
-                auto_delete=True  # ВКЛЮЧАЕМ АВТОУДАЛЕНИЕ
+                auto_delete=True
             )
 
-            # Загружаем данные из JSON
+            # Загружаем JSON
             with open(json_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
-            # Обогащаем данные purposes (массивом)
+            # Добавляем метаданные
             data["purposes"] = purposes
             data["purpose"] = ", ".join(purposes) if purposes else ""
 
-            # Добавляем описание категории в данные
             if category_description:
                 data["category_description"] = category_description
-                self.logger.info(f"✅ Описание категории добавлено в JSON")
 
-            # === GPT-ФИЛЬТРАЦИЯ КЛЮЧЕВЫХ СЛОВ ===
-            self.logger.info(f"🤖 Проверяю возможность GPT-фильтрации...")
-
-            # Получаем сервисы
+            # Получаем сервисы для GPT-фильтрации
             openai_service = self._get_openai_service()
             prompt_service = self._get_prompt_service()
 
-            if openai_service and prompt_service and data.get("keywords"):
-                self.logger.info(f"✅ Сервисы доступны. Запускаю GPT-фильтрацию...")
+            # Проверяем наличие ключевых слов и сервисов
+            if not data.get("keywords"):
+                error_msg = "No keywords found in Excel file"
+                log.error(LogCodes.ERR_MPSTATS, error=error_msg)
+                raise Exception(error_msg)
 
-                # Создаем и используем фильтр
-                try:
-                    from app.utils.json_keyword_filter import JSONKeywordFilter
-                    filter_processor = JSONKeywordFilter(openai_service, prompt_service)
+            if not openai_service or not prompt_service:
+                error_msg = "OpenAI or Prompt service not available for keyword filtering"
+                log.error(LogCodes.ERR_OPENAI, error=error_msg)
+                raise Exception(error_msg)
 
-                    # Фильтруем ключевые слова до 10 самых релевантных
-                    filtered_data = await filter_processor.filter_keywords_gpt(data, max_keywords)
+            # Применяем GPT-фильтрацию
+            from app.utils.json_keyword_filter import JSONKeywordFilter
+            filter_processor = JSONKeywordFilter(openai_service, prompt_service)
 
-                    # Сохраняем результат
-                    data = filtered_data
-                    self.logger.info(
-                        f"✅ GPT-фильтрация завершена! Оставлено {len(data.get('keywords', []))} ключевых слов")
-                except Exception as e:
-                    self.logger.error(f"❌ Ошибка GPT-фильтрации: {e}")
-                    data = self._simple_keyword_filter(data, max_keywords)
-            else:
-                self.logger.warning("⚠️ Сервисы не доступны, использую простую фильтрацию")
-                data = self._simple_keyword_filter(data, max_keywords)
+            original_count = len(data.get("keywords", []))
+            log.info(LogCodes.GPT_START, type="keyword_filter")
 
-            # Сохраняем обновленные данные
+            filtered_data = await filter_processor.filter_keywords_gpt(data, max_keywords)
+            filtered_count = len(filtered_data.get("keywords", []))
+
+            # Проверяем результат фильтрации
+            if filtered_count == 0:
+                error_msg = f"GPT filtering returned 0 keywords (original: {original_count})"
+                log.error(LogCodes.ERR_OPENAI, error=error_msg)
+                raise Exception(error_msg)
+
+            log.info(LogCodes.GPT_KEYWORD_FILTER, count=original_count, filtered=filtered_count)
+
+            # Сохраняем отфильтрованные данные
             with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+                json.dump(filtered_data, f, ensure_ascii=False, indent=2)
 
-            self.logger.info(f"✅ Финальный JSON сохранен: {json_path}")
-
-            # ===== ЯВНОЕ УДАЛЕНИЕ JSON ПОСЛЕ ИСПОЛЬЗОВАНИЯ =====
+            # Удаляем JSON после использования
             try:
                 if os.path.exists(json_path):
-                    # Пытаемся удалить через менеджер
                     temp_manager.delete_file(json_path)
-                    self.logger.info(f"🗑️ JSON файл удален после использования: {json_path}")
+                    log.info(LogCodes.DATA_JSON_DELETE, filename=os.path.basename(json_path))
             except Exception as e:
-                self.logger.warning(f"⚠️ Не удалось удалить JSON файл {json_path}: {e}")
+                log.warning(LogCodes.SCR_ERROR, error=f"JSON delete: {e}")
 
-            return data
+            return filtered_data
 
         except Exception as e:
-            self.logger.error(f"Ошибка обработки Excel файла: {e}")
+            log.error(LogCodes.ERR_MPSTATS, error=f"Process Excel: {e}")
             raise
 
     def _get_openai_service(self):
         """Получение сервиса OpenAI"""
-        # Пробуем получить из self.services
         if 'openai' in self.services:
             return self.services['openai']
-
-        # Или создадим новый
         try:
             from app.services.openai_service import OpenAIService
-            return OpenAIService()
+            openai_service = OpenAIService()
+            log.info(LogCodes.SYS_INIT, module="OpenAIService")
+            return openai_service
+        except ImportError as e:
+            log.error(LogCodes.ERR_OPENAI, error=f"Import error: {e}")
+            return None
         except Exception as e:
-            self.logger.warning(f"⚠️ Не удалось создать OpenAIService: {e}")
+            log.error(LogCodes.ERR_OPENAI, error=f"Init error: {e}")
             return None
 
     def _get_prompt_service(self):
         """Получение сервиса промптов"""
-        # Пробуем получить из self.services
         if 'prompt' in self.services:
             return self.services['prompt']
-
-        # Или создадим новый
         try:
             from app.services.prompt_service import PromptService
-            return PromptService()
+            prompt_service = PromptService()
+            log.info(LogCodes.SYS_INIT, module="PromptService")
+            return prompt_service
+        except ImportError as e:
+            log.error(LogCodes.ERR_OPENAI, error=f"Import error: {e}")
+            return None
         except Exception as e:
-            self.logger.warning(f"⚠️ Не удалось создать PromptService: {e}")
+            log.error(LogCodes.ERR_OPENAI, error=f"Init error: {e}")
             return None
 
-    def _simple_keyword_filter(self, data: Dict[str, Any], max_keywords: int = 25) -> Dict[str, Any]:
-        """Простая фильтрация ключевых слов без GPT"""
-        if "keywords" in data and data["keywords"]:
-            all_keywords = data["keywords"]
-            filtered_keywords = all_keywords[:max_keywords]
-
-            data["filtered_keywords"] = filtered_keywords
-            data["original_keywords_count"] = len(all_keywords)
-            data["filtered_keywords_count"] = len(filtered_keywords)
-            data["filtering_method"] = "simple_top_10"
-            data["all_keywords"] = all_keywords
-            data["keywords"] = filtered_keywords
-
-        return data
+    async def _cleanup_temp_files(self, excel_file: str):
+        """Очистка временных файлов"""
+        try:
+            if os.path.exists(excel_file):
+                os.remove(excel_file)
+                log.info(LogCodes.DATA_JSON_DELETE, filename=os.path.basename(excel_file))
+        except Exception as e:
+            log.warning(LogCodes.SCR_ERROR, error=f"Cleanup: {e}")

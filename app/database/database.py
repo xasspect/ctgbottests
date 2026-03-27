@@ -5,6 +5,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
 from app.config.config import config
+from app.utils.logger import log
+from app.utils.log_codes import LogCodes
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,6 @@ class Database:
     def connect(self):
         """Подключение к PostgreSQL"""
         try:
-            # Используем настройки пула из конфигурации
             self.engine = create_engine(
                 config.database.url,
                 pool_size=config.database.pool_size,
@@ -28,7 +29,7 @@ class Database:
                 pool_timeout=config.database.pool_timeout,
                 pool_recycle=config.database.pool_recycle,
                 pool_pre_ping=True,
-                echo=config.app.debug
+                echo=False  # Отключаем SQL логи
             )
 
             self.SessionLocal = sessionmaker(
@@ -37,61 +38,50 @@ class Database:
                 bind=self.engine
             )
 
-            # Тестируем подключение
             with self.engine.connect() as conn:
                 result = conn.execute(text("SELECT 1"))
                 result.scalar()
 
-            logger.info("✅ PostgreSQL connection established")
-            logger.info(f"📊 Database: {config.database.name} on {config.database.host}:{config.database.port}")
+            log.info(LogCodes.DB_CONNECT)
 
         except Exception as e:
-            logger.error(f"❌ PostgreSQL connection failed: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=f"Connection failed: {e}")
             raise
 
-    # app/database/database.py
-    # Убедитесь, что метод create_tables() работает с обновленными моделями
-
-
-
     def create_tables(self):
-        """Создание всех таблиц в PostgreSQL"""
+        """Создание всех таблиц в PostgreSQL (только если их нет)"""
         try:
             from app.database.models.user import User
             from app.database.models.category import Category
             from app.database.models.session import UserSession
             from app.database.models.content import GeneratedContent
+            from app.database.models.snapshot import ContentSnapshot
 
-            if config.app.debug:  # Только в режиме отладки
-                logger.warning("⚠️ Удаление существующих таблиц...")
-                self.Base.metadata.drop_all(bind=self.engine)
-
+            # Создаем таблицы только если их нет (без удаления)
             self.Base.metadata.create_all(bind=self.engine)
-            logger.info("✅ PostgreSQL tables created")
+            log.info(LogCodes.DB_TABLES_CREATED)
 
-            # Сначала запускаем миграции
+            # Проверяем и добавляем отсутствующие колонки (без generation_mode)
             self._check_and_add_missing_columns()
 
-            # Затем инициализируем начальные данные
+            # Инициализируем начальные данные (только если таблицы пустые)
             self._init_default_data()
 
         except Exception as e:
-            logger.error(f"❌ Failed to create PostgreSQL tables: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=f"Failed to create tables: {e}")
             raise
 
     def _init_default_data(self):
-        """Инициализация начальных данных"""
+        """Инициализация начальных данных (только если таблицы пустые)"""
         try:
             from app.database.models.category import Category
 
             with self.session_scope() as session:
-                # Проверяем, есть ли уже категории
                 existing_categories = session.query(Category).count()
 
                 if existing_categories == 0:
-                    logger.info("📊 Инициализация категорий по умолчанию...")
+                    log.info(LogCodes.SYS_INIT, module="Default categories")
 
-                    # Категории из вашего примера
                     default_categories = [
                         Category(
                             id="decorative_panels",
@@ -228,41 +218,28 @@ class Database:
                         session.add(category)
 
                     session.commit()
-                    logger.info(f"✅ Добавлено {len(default_categories)} категорий")
+                    log.info(LogCodes.DB_RECORD_CREATED, table="categories", id=f"{len(default_categories)} records")
                 else:
-                    logger.debug(f"✅ Категории уже существуют: {existing_categories} шт")
+                    log.debug(f"Categories already exist: {existing_categories}")
 
         except Exception as e:
-            logger.error(f"❌ Ошибка при инициализации данных: {e}")
-
-    def run_migrations(self):
-        """Запуск миграций базы данных"""
-        try:
-            # Проверяем и добавляем отсутствующие колонки
-            self._check_and_add_missing_columns()
-        except Exception as e:
-            logger.error(f"❌ Error running migrations: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=f"Init data: {e}")
 
     def _check_and_add_missing_columns(self):
-        """Проверяет и добавляет отсутствующие колонки"""
+        """Проверяет и добавляет отсутствующие колонки (без generation_mode)"""
         try:
             with self.engine.connect() as conn:
-                # Список таблиц и колонок для проверки
+                # Только необходимые колонки (убрали generation_mode)
                 tables_columns = {
                     'categories': [
-                        ('hidden_description', 'VARCHAR(500)', "''"),  # ← ДОБАВЬТЕ ЭТУ СТРОКУ
+                        ('hidden_description', 'VARCHAR(500)', "''"),
                         ('purposes', 'JSONB', "'{}'::jsonb"),
-                        ('description', 'VARCHAR(500)', "''")  # ← Также убедитесь, что description есть
-                    ],
-                    'user_sessions': [
-                        ('generation_mode', 'VARCHAR(50)', "'advanced'"),
-                        ('is_active', 'BOOLEAN', 'true')
+                        ('description', 'VARCHAR(500)', "''")
                     ]
                 }
 
                 for table, columns in tables_columns.items():
                     for column_name, column_type, default_value in columns:
-                        # Проверяем существование колонки
                         result = conn.execute(text(f"""
                             SELECT column_name 
                             FROM information_schema.columns 
@@ -271,32 +248,26 @@ class Database:
                         """))
 
                         if not result.fetchone():
-                            logger.info(f"🔄 Добавляю колонку '{column_name}' в таблицу '{table}'...")
-
                             sql = f"ALTER TABLE {table} ADD COLUMN {column_name} {column_type}"
                             if default_value and default_value != "'NULL'" and default_value != "NULL":
                                 sql += f" DEFAULT {default_value}"
 
                             conn.execute(text(sql))
                             conn.commit()
-
-                            logger.info(f"✅ Колонка '{column_name}' добавлена в таблицу '{table}'")
-                        else:
-                            logger.debug(f"✅ Колонка '{column_name}' уже существует в таблице '{table}'")
+                            log.info(LogCodes.DB_MIGRATION, migration=f"Added {column_name} to {table}")
 
         except Exception as e:
-            logger.error(f"❌ Ошибка при проверке структуры БД: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=f"Migration: {e}")
 
     def get_session(self) -> Session:
         """Получение сессии БД"""
         if not self.SessionLocal:
             self.connect()
-
         return self.SessionLocal()
 
     @contextmanager
     def session_scope(self):
-        """Контекстный менеджер для сессий (для автоматического закрытия)"""
+        """Контекстный менеджер для сессий"""
         session = self.get_session()
         try:
             yield session
@@ -311,8 +282,7 @@ class Database:
         """Закрытие подключения к PostgreSQL"""
         if self.engine:
             self.engine.dispose()
-            logger.info("✅ PostgreSQL connection closed")
+            log.info(LogCodes.DB_DISCONNECT)
 
 
-# Глобальный экземпляр БД
 database = Database()

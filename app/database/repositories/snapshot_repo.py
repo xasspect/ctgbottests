@@ -7,11 +7,10 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from app.database.repositories.base import BaseRepository
 from app.database.models.snapshot import ContentSnapshot
-import logging
 import pandas as pd
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
+from app.utils.logger import log
+from app.utils.log_codes import LogCodes
 
 
 class SnapshotRepository(BaseRepository[ContentSnapshot]):
@@ -19,8 +18,6 @@ class SnapshotRepository(BaseRepository[ContentSnapshot]):
 
     def __init__(self):
         super().__init__(ContentSnapshot)
-        self.logger = logging.getLogger(__name__)
-        # Путь для Excel файлов
         self.excel_dir = Path("content_snapshots")
         self.excel_dir.mkdir(exist_ok=True)
 
@@ -28,18 +25,9 @@ class SnapshotRepository(BaseRepository[ContentSnapshot]):
                         content: Dict[str, Any], generation_type: str, marketplace: str) -> ContentSnapshot:
         """
         Создает снимок генерации контента
-
-        Args:
-            user_id: ID пользователя
-            session_id: ID сессии
-            context: Словарь с контекстом (category, purposes, additional_params, keywords)
-            content: Словарь со сгенерированным контентом
-            generation_type: Тип генерации (title, short_desc, long_desc, desc)
-            marketplace: Маркетплейс (wb, ozon)
         """
         session = self.get_session()
         try:
-            # Подготавливаем данные для снимка
             snapshot_data = {
                 'user_id': user_id,
                 'session_id': session_id,
@@ -57,22 +45,20 @@ class SnapshotRepository(BaseRepository[ContentSnapshot]):
                 'marketplace': marketplace,
             }
 
-            # Создаем запись в БД
             snapshot = ContentSnapshot(**snapshot_data)
             session.add(snapshot)
             session.commit()
             session.refresh(snapshot)
 
-            self.logger.info(f"✅ Создан снимок {snapshot.id} для пользователя {user_id}")
+            log.info(LogCodes.GEN_SNAPSHOT, id=snapshot.id[:8])
 
-            # Дублируем в Excel
             self._append_to_excel(snapshot)
 
             return snapshot
 
         except Exception as e:
             session.rollback()
-            self.logger.error(f"❌ Ошибка создания снимка: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=f"Create snapshot: {e}")
             raise
         finally:
             session.close()
@@ -80,11 +66,9 @@ class SnapshotRepository(BaseRepository[ContentSnapshot]):
     def _append_to_excel(self, snapshot: ContentSnapshot):
         """Добавляет снимок в Excel файл"""
         try:
-            # Формируем имя файла (новый файл каждый месяц)
             today = datetime.now()
             filename = self.excel_dir / f"snapshots_{today.strftime('%Y_%m')}.xlsx"
 
-            # Подготавливаем данные для строки
             row_data = {
                 'timestamp': snapshot.created_at.strftime('%Y-%m-%d %H:%M:%S'),
                 'user_id': snapshot.user_id,
@@ -106,51 +90,26 @@ class SnapshotRepository(BaseRepository[ContentSnapshot]):
                 'snapshot_id': snapshot.id,
             }
 
-            # Проверяем, существует ли файл
             if filename.exists():
-                # Читаем существующий файл
                 df = pd.read_excel(filename)
-                # Добавляем новую строку
                 new_row = pd.DataFrame([row_data])
                 df = pd.concat([df, new_row], ignore_index=True)
             else:
-                # Создаем новый файл
                 df = pd.DataFrame([row_data])
 
-            # Сохраняем
             df.to_excel(filename, index=False)
-            self.logger.info(f"✅ Снимок добавлен в Excel: {filename}")
 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка записи в Excel: {e}")
-
-    # app/database/repositories/snapshot_repo.py
-
-    # app/database/repositories/snapshot_repo.py
+            log.warning(LogCodes.ERR_DATABASE, error=f"Excel append: {e}")
 
     def get_user_snapshots(self, user_id: int, limit: int = 50) -> List[ContentSnapshot]:
         """Получает последние снимки пользователя"""
-        self.logger.info(f"🔍 Поиск снимков для пользователя {user_id} (тип: {type(user_id)})")
-
         with self.get_session() as session:
-            # Сначала проверим, есть ли вообще снимки в БД
-            total_count = session.query(ContentSnapshot).count()
-            self.logger.info(f"📊 Всего снимков в БД: {total_count}")
-
-            # Ищем снимки для конкретного пользователя
             snapshots = session.query(ContentSnapshot) \
                 .filter(ContentSnapshot.user_id == user_id) \
                 .order_by(ContentSnapshot.created_at.desc()) \
                 .limit(limit) \
                 .all()
-
-            self.logger.info(f"✅ Найдено снимков для пользователя {user_id}: {len(snapshots)}")
-
-            # Если не нашли, проверим все уникальные user_id в БД
-            if not snapshots:
-                all_users = session.query(ContentSnapshot.user_id).distinct().all()
-                self.logger.info(f"👥 Уникальные user_id в БД: {[u[0] for u in all_users]}")
-
             return snapshots
 
     def get_snapshots_by_date(self, start_date: datetime, end_date: datetime) -> List[ContentSnapshot]:
@@ -185,23 +144,17 @@ class SnapshotRepository(BaseRepository[ContentSnapshot]):
                 df = pd.DataFrame(data)
                 output_path = filepath or self.excel_dir / f"all_snapshots_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
                 df.to_excel(output_path, index=False)
-                self.logger.info(f"✅ Экспортировано {len(data)} снимков в {output_path}")
+                log.info(LogCodes.DATA_EXCEL_LOAD, filename=output_path)
                 return str(output_path)
             return None
 
-    # app/database/repositories/snapshot_repo.py (добавьте эти методы)
-
     def get_recent_snapshots(self, limit: int = 10) -> List[ContentSnapshot]:
         """Получает последние снимки без фильтрации по пользователю"""
-        self.logger.info(f"🔍 Получение последних {limit} снимков")
-
         with self.get_session() as session:
             snapshots = session.query(ContentSnapshot) \
                 .order_by(ContentSnapshot.created_at.desc()) \
                 .limit(limit) \
                 .all()
-
-            self.logger.info(f"✅ Найдено снимков: {len(snapshots)}")
             return snapshots
 
     def get_all_snapshots(self, limit: int = 1000) -> List[ContentSnapshot]:

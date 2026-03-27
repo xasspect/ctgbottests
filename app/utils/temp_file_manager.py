@@ -1,12 +1,10 @@
 # app/utils/temp_file_manager.py
 import os
-import logging
 import atexit
-import shutil
 from pathlib import Path
 from typing import Optional
-
-logger = logging.getLogger(__name__)
+from app.utils.logger import log
+from app.utils.log_codes import LogCodes
 
 
 class TempFileManager:
@@ -18,7 +16,6 @@ class TempFileManager:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            # Регистрируем очистку при завершении программы
             atexit.register(cls._instance.cleanup_all)
         return cls._instance
 
@@ -26,7 +23,7 @@ class TempFileManager:
         """Помечает файл для удаления"""
         if file_path and os.path.exists(file_path):
             self._files_to_delete.add(file_path)
-            logger.debug(f"📌 Файл помечен для удаления: {file_path}")
+            log.debug(f"File marked for deletion: {file_path}")
 
     def delete_file(self, file_path: str) -> bool:
         """Немедленно удаляет файл"""
@@ -34,10 +31,10 @@ class TempFileManager:
             if file_path and os.path.exists(file_path):
                 os.remove(file_path)
                 self._files_to_delete.discard(file_path)
-                logger.info(f"✅ Файл удален: {file_path}")
+                log.info(LogCodes.DATA_JSON_DELETE, filename=os.path.basename(file_path))
                 return True
         except Exception as e:
-            logger.error(f"❌ Ошибка удаления файла {file_path}: {e}")
+            log.warning(LogCodes.SCR_ERROR, error=f"Delete file {file_path}: {e}")
         return False
 
     def cleanup_all(self) -> None:
@@ -47,7 +44,7 @@ class TempFileManager:
             if self.delete_file(file_path):
                 deleted_count += 1
         if deleted_count > 0:
-            logger.info(f"🧹 Очищено {deleted_count} временных файлов")
+            log.info(LogCodes.DATA_JSON_DELETE, filename=f"{deleted_count} temp files")
 
     def get_temp_path(self, base_name: str, suffix: str = ".json") -> str:
         """Создает временный путь и помечает его для удаления"""

@@ -11,9 +11,9 @@ class Category(Base, BaseModel):
     name = Column(String(255), unique=True, nullable=False)
     description = Column(Text, nullable=True)
     hidden_description = Column(String, nullable=True)
-    system_prompt_filter = Column(Text, nullable=True)
-    system_prompt_title = Column(Text, nullable=True)
-    system_prompt_description = Column(Text, nullable=True)
+    # system_prompt_filter = Column(Text, nullable=True)
+    # system_prompt_title = Column(Text, nullable=True)
+    # system_prompt_description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     purposes = Column(JSON, nullable=True, default=dict)  # Добавляем поле для целей

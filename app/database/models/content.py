@@ -22,7 +22,7 @@ class GeneratedContent(Base, BaseModel):
 
     # Метаданные
     category_id = Column(String, ForeignKey('categories.id'), nullable=True)
-    purpose = Column(String(255), nullable=True)
+    # purpose = Column(String(255), nullable=True)
 
     def __repr__(self):
         return f"<GeneratedContent(id={self.id}, user_id={self.user_id})>"

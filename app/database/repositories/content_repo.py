@@ -2,6 +2,8 @@
 from typing import List, Optional
 from app.database.repositories.base import BaseRepository
 from app.database.models.content import GeneratedContent
+from app.utils.logger import log
+from app.utils.log_codes import LogCodes
 
 
 class ContentRepository(BaseRepository[GeneratedContent]):
@@ -27,13 +29,11 @@ class ContentRepository(BaseRepository[GeneratedContent]):
         """
         session = self.get_session()
         try:
-            # Проверяем, есть ли уже запись для этой сессии
             existing = session.query(GeneratedContent).filter(
                 GeneratedContent.session_id == session_id
             ).first()
 
             if existing:
-                # Обновляем существующую
                 existing.title = title or existing.title
                 existing.short_description = short_desc or existing.short_description
                 existing.long_description = long_desc or existing.long_description
@@ -45,10 +45,9 @@ class ContentRepository(BaseRepository[GeneratedContent]):
 
                 session.commit()
                 session.refresh(existing)
-                self.logger.info(f"✅ Обновлена запись контента для сессии {session_id}")
+                log.info(LogCodes.DB_RECORD_UPDATED, table="generated_content", id=session_id[:8])
                 return existing
             else:
-                # Создаем новую
                 new_content = GeneratedContent(
                     session_id=session_id,
                     user_id=user_id,
@@ -64,12 +63,12 @@ class ContentRepository(BaseRepository[GeneratedContent]):
                 session.add(new_content)
                 session.commit()
                 session.refresh(new_content)
-                self.logger.info(f"✅ Создана новая запись контента для сессии {session_id}")
+                log.info(LogCodes.DB_RECORD_CREATED, table="generated_content", id=session_id[:8])
                 return new_content
 
         except Exception as e:
             session.rollback()
-            self.logger.error(f"❌ Ошибка сохранения результата генерации: {e}")
+            log.error(LogCodes.ERR_DATABASE, error=f"Save generation: {e}")
             return None
         finally:
             session.close()
@@ -82,7 +81,6 @@ class ContentRepository(BaseRepository[GeneratedContent]):
                 .filter(GeneratedContent.session_id == session_id)
                 .first()
             )
-
 
     def create_content(self, **kwargs) -> GeneratedContent:
         """Создать запись сгенерированного контента"""

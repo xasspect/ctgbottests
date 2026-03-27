@@ -1,129 +1,23 @@
 # app/services/prompt_service.py
-
 import logging
 import re
 from typing import Tuple, List, Optional
+from app.utils.logger import log
+from app.utils.log_codes import LogCodes
 
 
 class PromptService:
     """
     Универсальный сервис генерации SEO-контента
     для Wildberries и Ozon.
-
-    Работает ТОЛЬКО на основе:
-    - Заголовок
-    - Описание
     """
 
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
+        pass
 
     # ============================================================
-    # МЕТОД ДЛЯ ФИЛЬТРАЦИИ КЛЮЧЕВЫХ СЛОВ
+    # МЕТОД ДЛЯ ФИЛЬТРАЦИИ КЛЮЧЕВЫХ СЛОВ (СТАРАЯ ВЕРСИЯ - БОЛЕЕ СТРОГАЯ)
     # ============================================================
-
-#     def get_keywords_filter_prompt(
-#             self,
-#             category: str,
-#             purposes: List[str],
-#             additional_params: List[str],
-#             category_description: str = "",
-#             max_keywords: int = 13
-#     ) -> Tuple[str, str]:
-#         """
-#         Промпт для фильтрации ключевых слов через GPT
-#         Отбирает РОВНО 13 самых релевантных ключей по строгому алгоритму
-#
-#         Args:
-#             category: Категория товара
-#             purposes: Назначения товара
-#             additional_params: Дополнительные параметры
-#             category_description: Описание категории
-#             max_keywords: Сколько ключевых слов оставить
-#
-#         Returns:
-#             Кортеж (system_prompt, user_prompt)
-#         """
-#         purposes_text = ", ".join(purposes) if purposes else "не указаны"
-#         params_text = ", ".join(additional_params) if additional_params else "не указаны"
-#
-#         system_prompt = f"""Ты SEO-аналитик маркетплейсов.
-#
-# Твоя задача:
-# Из списка ключевых слов (примерно 30) выбрать РОВНО 13 самых релевантных.
-#
-# Работай строго по алгоритму.
-#
-# ЭТАП 1 — Классифицируй каждый ключ по категориям:
-# 1. Тип товара
-# 2. Материал
-# 3. Основной поисковый запрос
-# 4. Назначение
-# 5. Зона применения
-# 6. Цвет / фактура
-# 7. Формат
-# 8. Размер
-# 9. Количество
-# 10. Техническое свойство
-# 11. SEO-синоним
-# 12. Нерелевантный
-#
-# ЭТАП 2 — Оцени релевантность по шкале 0–5:
-# 5 — основной высокочастотный запрос
-# 4 — усиливает основной
-# 3 — важная характеристика
-# 2 — вспомогательный
-# 1 — слабый
-# 0 — нерелевантный
-#
-# ЭТАП 3 — Отбери РОВНО 13 ключей по строгой квоте:
-# 1 — основной поисковый запрос
-# 1 — тип товара
-# 1 — материал
-# 2 — назначение
-# 1 — зона применения
-# 2 — технические свойства
-# 1 — формат
-# 1 — размер
-# 1 — количество
-# 2 — SEO-синонимы
-#
-# Если категории нет — перераспредели в свойства или назначение.
-#
-# ЭТАП 4 — Удали смысловые дубли.
-# Оставляй только наиболее частотную форму.
-#
-# Выведи ТОЛЬКО итоговый список из 13 ключей в правильном порядке приоритета:
-# Основной запрос →
-# Тип товара →
-# Материал →
-# Назначение →
-# Зона применения →
-# Свойства →
-# Формат →
-# Размер →
-# Количество →
-# SEO-синонимы
-#
-# Без объяснений.
-# Без комментариев.
-# Только список.
-# """
-#
-#         user_prompt = f"""Контекст товара:
-# - Категория: {category}
-# - Назначения: {purposes_text}
-# - Дополнительные параметры: {params_text}
-# - Описание категории: {category_description if category_description else "не указано"}
-#
-# Список ключевых слов для фильтрации:
-# {{keywords_list}}
-#
-# Отбери из списка РОВНО 13 самых релевантных ключевых слов, строго следуя алгоритму.
-#
-# Формат ответа: слово1, слово2, слово3, слово4, слово5, слово6, слово7, слово8, слово9, слово10, слово11, слово12, слово13"""
-#
-#         return system_prompt, user_prompt
 
     def get_keywords_filter_prompt(
             self,
@@ -131,48 +25,105 @@ class PromptService:
             purposes: List[str],
             additional_params: List[str],
             category_description: str = "",
-            max_keywords: int = 25
-    ) -> tuple[str, str]:
+            max_keywords: int = 13
+    ) -> Tuple[str, str]:
         """
         Промпт для фильтрации ключевых слов через GPT
+        Отбирает РОВНО 13 самых релевантных ключей по строгому алгоритму
+
+        Args:
+            category: Категория товара
+            purposes: Назначения товара
+            additional_params: Дополнительные параметры
+            category_description: Описание категории
+            max_keywords: Сколько ключевых слов оставить
 
         Returns:
             Кортеж (system_prompt, user_prompt)
         """
-        purposes_text = ", ".join(purposes) if isinstance(purposes, list) else str(purposes)
+        purposes_text = ", ".join(purposes) if purposes else "не указаны"
         params_text = ", ".join(additional_params) if additional_params else "не указаны"
 
-        system_prompt = f"""Ты — профессиональный маркетолог-копирайтер для маркетплейсов Wildberries и OZON. 
-        Твоя задача — отобрать ТОЛЬКО {max_keywords} самых продающих и релевантных ключевых слов из списка 
-        для создания заголовков и описаний товаров."""
+        system_prompt = f"""Ты SEO-аналитик маркетплейсов.
 
-        user_prompt = f"""
-        Контекст товара:
-        - Категория: {category}
-        - Назначения: {purposes_text}
-        - Доп. параметры: {params_text}
-        - Описание категории: {category_description if category_description else "не указано"}
+Твоя задача:
+Из списка ключевых слов выбрать РОВНО {max_keywords} самых релевантных.
 
-        Критерии отбора ключевых слов (В ПРИОРИТЕТЕ):
-        1. **Продающие слова** — которые побуждают к покупке (качество, премиум, выгодно, новинка, хит)
-        2. **Конкретика** — точные названия товаров/свойств
-        3. **Пользовательский язык** — как ищут реальные покупатели
-        4. **Релевантность категории** — точно соответствуют "{category}"
-        5. **Учет назначений** — подходят для "{purposes_text}"
-        6. **SEO-оптимизация** — популярные поисковые запросы на маркетплейсах
-        7. **Коммерческий потенциал** — слова, которые конвертируют в продажи
+Работай строго по алгоритму.
 
-        ИСКЛЮЧАЙ:
-        - Общие слова без конкретики (типа "товар", "изделие")
-        - Технические термины, не понятные покупателям
-        - Слова с ошибками или опечатками
-        - Слишком длинные фразы (больше 3 слов)
-        - Устаревшие или непопулярные запросы
+ЭТАП 1 — Классифицируй каждый ключ по категориям:
+1. Тип товара
+2. Материал
+3. Основной поисковый запрос
+4. Назначение
+5. Зона применения
+6. Цвет / фактура
+7. Формат
+8. Размер
+9. Количество
+10. Техническое свойство
+11. SEO-синоним
+12. Нерелевантный
 
-        Список ключевых слов для фильтрации: {{keywords_list}}
+ЭТАП 2 — Оцени релевантность по шкале 0–5:
+5 — основной высокочастотный запрос
+4 — усиливает основной
+3 — важная характеристика
+2 — вспомогательный
+1 — слабый
+0 — нерелевантный
 
-        Формат ответа: ТОЛЬКО список из {max_keywords} ключевых слов через запятую, без нумерации, без пояснений.
-        """
+ЭТАП 3 — Отбери РОВНО {max_keywords} ключей по строгой квоте:
+1 — основной поисковый запрос
+1 — тип товара
+1 — материал
+2 — назначение
+1 — зона применения
+2 — технические свойства
+1 — формат
+1 — размер
+1 — количество
+2 — SEO-синонимы
+
+Если категории нет — перераспредели в свойства или назначение.
+
+ЭТАП 4 — Удали смысловые дубли.
+Оставляй только наиболее частотную форму.
+
+ВАЖНО: 
+- НЕ добавляй слова, которых нет в исходном списке
+- НЕ используй маркетинговые слова (хит, новинка, премиум, топ), если их нет в списке
+- Используй ТОЛЬКО слова из предоставленного списка
+
+Выведи ТОЛЬКО итоговый список из {max_keywords} ключей в правильном порядке приоритета:
+Основной запрос →
+Тип товара →
+Материал →
+Назначение →
+Зона применения →
+Свойства →
+Формат →
+Размер →
+Количество →
+SEO-синонимы
+
+Без объяснений.
+Без комментариев.
+Только список через запятую.
+"""
+
+        user_prompt = f"""Контекст товара:
+- Категория: {category}
+- Назначения: {purposes_text}
+- Дополнительные параметры: {params_text}
+- Описание категории: {category_description if category_description else "не указано"}
+
+Список ключевых слов для фильтрации:
+{{keywords_list}}
+
+Отбери из списка РОВНО {max_keywords} самых релевантных ключевых слов, строго следуя алгоритму.
+
+Формат ответа: слово1, слово2, слово3, слово4, слово5, слово6, слово7, слово8, слово9, слово10, слово11, слово12, слово{max_keywords}"""
 
         return system_prompt, user_prompt
 
@@ -194,8 +145,6 @@ class PromptService:
         - OZON TITLE
         - OZON FULL DESCRIPTION
         """
-
-        # ================= SYSTEM PROMPT =================
 
         system_prompt = """
 Ты — профессиональный SEO-специалист по маркетплейсам Wildberries и Ozon.
@@ -363,8 +312,6 @@ class PromptService:
 текст
 """
 
-        # ================= USER PROMPT =================
-
         user_prompt = f"""
 Входные данные товара:
 
@@ -372,41 +319,7 @@ class PromptService:
 
 Описание: {description_raw}
 
-На основе этих данных сгенерируй:
-
-1) Название для WB до 60 символов
-
-ТРЕБОВАНИЯ К WB НАЗВАНИЮ:
-- строго 60-80 символов
-- СТРОГИЙ ПОРЯДОК КЛЮЧЕЙ:
-  1. Самый частотный поисковый запрос
-  2. Материал (ПВХ если это панели и они не звукопоглащающие)
-  3. Назначение
-  4. Формат
-  5. Размер или количество
-- НЕ начинать с цвета или размера
-- НЕ менять порядок ключей
-- без знаков препинания
-- без маркетинга
-- Отсутствие размеров если они не были явно переданы в "Дополнительные параметры"
-
-2) Краткий заголовок WB до 50 символов
-3) Краткое описание WB до 1000 символов
-4) Полное SEO описание WB около 2000 символов
-5) SEO название для Ozon
-
-ТРЕБОВАНИЯ К OZON НАЗВАНИЮ:
-- строго 120–160 символов
-- минимум 120 символов (обязательно!)
-- главный поисковый запрос в начале
-- добавить максимум характеристик из входных данных
-- можно расширять за счет размеров, цвета, материала, назначения, количества
-- никаких маркетинговых слов
-- Не указывать размеры если они явно не были переданы в формате "число"x"число"
-
-ВАЖНО: если длина меньше 120 символов — продолжай расширять характеристиками из входных данных, пока не достигнешь минимума.
-
-6) Полное SEO описание Ozon 1500–3000 символов
+На основе этих данных сгенерируй все необходимые форматы контента.
 
 Строго соблюдай все правила.
 
@@ -424,7 +337,6 @@ class PromptService:
         purposes_text = ", ".join(purposes) if purposes else ""
         keywords_text = ", ".join(keywords[:15]) if keywords else ""
 
-        # Формируем заголовок вида: "Категория: назначения (ключевые слова)"
         title = category
         if purposes_text:
             title += f", {purposes_text}"
@@ -440,7 +352,6 @@ class PromptService:
         params_text = ", ".join(additional_params) if additional_params else "не указаны"
         keywords_text = ", ".join(keywords[:30]) if keywords else "не указаны"
 
-        # Определяем, есть ли размеры в ключевых словах или параметрах
         has_sizes = any(ind in str(keywords_text + params_text).lower()
                         for ind in ['мм', 'см', 'м', 'размер', '×', 'x'])
 
@@ -463,40 +374,24 @@ class PromptService:
     def parse_result(self, result: str, section: str) -> str:
         """Парсит результат, извлекая только указанную секцию"""
         try:
-            # Логируем первые 500 символов ответа для отладки
-            self.logger.info(f"Сырой ответ от GPT (первые 500 символов):\n{result[:500]}")
-
-            # Ищем секцию с разделителями
             pattern = rf"=== {section} ===\n(.*?)(?=\n===|\Z)"
             match = re.search(pattern, result, re.DOTALL | re.MULTILINE)
             if match:
-                extracted = match.group(1).strip()
-                self.logger.info(f"✅ Извлечена секция {section}, длина: {len(extracted)}")
-                return extracted
-
-            # Если не нашли - логируем это
-            self.logger.warning(f"⚠️ Секция {section} не найдена в ответе!")
+                return match.group(1).strip()
             return result
 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка парсинга секции {section}: {e}")
+            log.warning(LogCodes.ERR_PARSE, data=f"Section {section}: {e}")
             return result
 
     # Методы для Wildberries
     def get_wb_title_prompt(self, category: str, purposes: List[str],
                             additional_params: List[str], keywords: List[str]) -> Tuple[str, str]:
-        """
-        Промпт для генерации заголовка Wildberries
-        Возвращает system_prompt и user_prompt
-        """
-        # Формируем заголовок и описание из входных данных
+        """Промпт для генерации заголовка Wildberries"""
         title_raw = self._build_title_raw(category, purposes, keywords)
         description_raw = self._build_description_raw(category, purposes, additional_params, keywords)
 
-        # Получаем универсальные промпты
         system_prompt, user_prompt = self.get_marketplace_content_prompt(title_raw, description_raw)
-
-        # Добавляем в user_prompt указание, что нужен только WB TITLE с акцентом на порядок
         user_prompt += """
 
 Верни ТОЛЬКО секцию WB_TITLE, без остальных секций.
@@ -515,9 +410,7 @@ class PromptService:
 
     def get_wb_short_desc_prompt(self, category: str, purposes: List[str],
                                  additional_params: List[str], keywords: List[str]) -> Tuple[str, str]:
-        """
-        Промпт для генерации краткого описания Wildberries
-        """
+        """Промпт для генерации краткого описания Wildberries"""
         title_raw = self._build_title_raw(category, purposes, keywords)
         description_raw = self._build_description_raw(category, purposes, additional_params, keywords)
 
@@ -528,9 +421,7 @@ class PromptService:
 
     def get_wb_long_desc_prompt(self, category: str, purposes: List[str],
                                 additional_params: List[str], keywords: List[str]) -> Tuple[str, str]:
-        """
-        Промпт для генерации полного описания Wildberries
-        """
+        """Промпт для генерации полного описания Wildberries"""
         title_raw = self._build_title_raw(category, purposes, keywords)
         description_raw = self._build_description_raw(category, purposes, additional_params, keywords)
 
@@ -543,9 +434,7 @@ class PromptService:
     def get_ozon_title_prompt(self, category: str, purposes: List[str],
                               additional_params: List[str], keywords: List[str],
                               category_description: str = "") -> Tuple[str, str]:
-        """
-        Промпт для генерации SEO-названия Ozon
-        """
+        """Промпт для генерации SEO-названия Ozon"""
         title_raw = self._build_title_raw(category, purposes, keywords)
         if category_description and category_description not in title_raw:
             title_raw = f"{category_description} / {title_raw}"
@@ -554,8 +443,6 @@ class PromptService:
 
         system_prompt, user_prompt = self.get_marketplace_content_prompt(title_raw, description_raw)
         user_prompt += "\n\nВерни ТОЛЬКО секцию OZON_TITLE, без остальных секций."
-
-        # Добавляем дополнительное напоминание о длине
         user_prompt += "\n\nВАЖНО: ПРОВЕРЬ ДЛИНУ! Название должно быть строго 120-160 символов. Если меньше 120 — добавь характеристики."
 
         return system_prompt, user_prompt
@@ -563,9 +450,7 @@ class PromptService:
     def get_ozon_desc_prompt(self, category: str, purposes: List[str],
                              additional_params: List[str], keywords: List[str],
                              category_description: str = "") -> Tuple[str, str]:
-        """
-        Промпт для генерации SEO-описания Ozon
-        """
+        """Промпт для генерации SEO-описания Ozon"""
         title_raw = self._build_title_raw(category, purposes, keywords)
         if category_description and category_description not in title_raw:
             title_raw = f"{category_description} / {title_raw}"
@@ -577,22 +462,15 @@ class PromptService:
 
         return system_prompt, user_prompt
 
-    # Дополнительный метод для получения всего контента сразу (если понадобится)
     def get_all_content_prompts(self, category: str, purposes: List[str],
                                 additional_params: List[str], keywords: List[str]) -> Tuple[str, str]:
-        """
-        Возвращает промпты для генерации всего контента сразу
-        """
+        """Возвращает промпты для генерации всего контента сразу"""
         title_raw = self._build_title_raw(category, purposes, keywords)
         description_raw = self._build_description_raw(category, purposes, additional_params, keywords)
-
         return self.get_marketplace_content_prompt(title_raw, description_raw)
 
     def parse_all_content(self, result: str) -> dict:
-        """
-        Парсит результат генерации всех секций
-        Возвращает словарь с секциями
-        """
+        """Парсит результат генерации всех секций"""
         sections = [
             "WB_TITLE",
             "WB_SHORT_TITLE",
@@ -601,10 +479,7 @@ class PromptService:
             "OZON_TITLE",
             "OZON_FULL_DESCRIPTION"
         ]
-
         parsed = {}
         for section in sections:
-            # Используем новый метод
             parsed[section.lower()] = self.parse_result(result, section)
-
         return parsed

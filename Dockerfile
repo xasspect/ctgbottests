@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y \
     # Для работы с архивами
     unzip \
     zip \
+    curl \
     --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -44,43 +45,34 @@ RUN wget -q -O /tmp/chrome.deb \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем ChromeDriver
-RUN CHROME_VERSION=$(google-chrome --version | sed -E 's/.* ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+).*/\1/') \
-    && echo "Chrome version: $CHROME_VERSION" \
-    && wget -q -O /tmp/chromedriver.zip \
-    "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/${CHROME_VERSION}/linux64/chromedriver-linux64.zip" \
-    && unzip /tmp/chromedriver.zip -d /tmp/ \
-    && mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver \
-    && chmod +x /usr/local/bin/chromedriver \
-    && rm -rf /tmp/chromedriver*
+# Проверяем установку Chrome
+RUN google-chrome --version
 
 WORKDIR /app
 
-# Сначала установим только необходимые для сборки пакеты
+# Копируем requirements и устанавливаем зависимости
 COPY requirements.txt .
 
-# Обновляем pip и устанавливаем wheel
-RUN pip install --no-cache-dir --upgrade pip wheel setuptools
+# Обновляем pip и устанавливаем все зависимости
+RUN pip install --no-cache-dir --upgrade pip wheel setuptools && \
+    pip install --no-cache-dir --prefer-binary -r requirements.txt
 
-# Устанавливаем Cython отдельно (нужен для некоторых пакетов)
-RUN pip install --no-cache-dir Cython
-
-# Теперь устанавливаем остальные зависимости с предпочтением бинарных пакетов
-RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
-
-# Копируем остальной код
+# Копируем весь код
 COPY . .
 
-# Создаем директории
+# Создаем необходимые директории
 RUN mkdir -p logs downloads data keywords chrome_profile
+
+# Устанавливаем правильные права
+RUN chmod -R 777 logs downloads data keywords chrome_profile
 
 # Переменные окружения
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
-ENV CHROME_BIN=/usr/bin/google-chrome-stable
-ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
+ENV CHROME_BIN=/usr/bin/google-chrome
 ENV DISPLAY=:99
-ENV HEADLESS=true
+ENV SELENIUM_HEADLESS=true
+ENV WDM_LOG_LEVEL=0
 
 # Создаем пользователя для безопасности
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
